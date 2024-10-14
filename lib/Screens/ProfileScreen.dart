@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'LoginScreen.dart';
+import 'OrderTracking.dart'; // Import the Orders page
 
 class ProfileScreen extends StatefulWidget {
   @override
@@ -6,10 +10,13 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  String currentPlan = 'Basic Plan';
-  String name = 'John Doe';
-  String email = 'john.doe@example.com';
-  String phone = '(123) 456-7890';
+  String currentPlan = 'Basic Plan'; // Can be dynamically set based on user data
+  String name = '';
+  String email = '';
+  String phone = '';
+
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  List<Map<String, dynamic>> recentOrders = [];
 
   final List<Map<String, dynamic>> plans = [
     {'name': 'Basic Plan', 'price': 29.99, 'services': ['Wash', 'Fold', 'Iron']},
@@ -17,16 +24,72 @@ class _ProfileScreenState extends State<ProfileScreen> {
     {'name': 'Premium Plus Plan', 'price': 69.99, 'services': ['Premium Wash', 'Fold', 'Iron', 'Stain Removal', 'Dry Cleaning', 'Saree Rolling', 'Shoe Cleaning']},
   ];
 
-  final List<Map<String, String>> recentOrders = [
-    {'id': '1234', 'date': '2023-05-01', 'status': 'Delivered'},
-    {'id': '1233', 'date': '2023-04-28', 'status': 'Delivered'},
-    {'id': '1232', 'date': '2023-04-25', 'status': 'Delivered'},
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _fetchUserProfile();
+    _fetchUserOrders();
+  }
+
+  Future<void> _fetchUserProfile() async {
+    try {
+      User? currentUser = _auth.currentUser;
+
+      if (currentUser != null) {
+        DocumentSnapshot userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser.uid)
+            .get();
+
+        if (userDoc.exists) {
+          setState(() {
+            name = userDoc['name'] ?? 'N/A';
+            email = userDoc['email'] ?? 'N/A';
+            phone = userDoc['phone'] ?? 'N/A';
+          });
+        }
+      }
+    } catch (e) {
+      print('Error fetching user profile: $e');
+    }
+  }
+
+  Future<void> _fetchUserOrders() async {
+    try {
+      User? currentUser = _auth.currentUser;
+
+      if (currentUser != null) {
+        DocumentReference userRef = FirebaseFirestore.instance.collection('users').doc(currentUser.uid);
+
+        QuerySnapshot ordersSnapshot = await FirebaseFirestore.instance
+            .collection('orders')
+            .where('userId', isEqualTo: userRef)
+            .orderBy('createdAt', descending: true)
+            .limit(3)
+            .get();
+
+        setState(() {
+          recentOrders = ordersSnapshot.docs.map((doc) {
+            return {
+              'id': doc.id,
+              'date': (doc['createdAt'] as Timestamp?)?.toDate().toString().split(' ')[0] ?? 'N/A',
+              'status': doc['status'] ?? 'Unknown',
+            };
+          }).toList();
+        });
+      }
+    } catch (e) {
+      print('Error fetching recent orders: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Profile')),
+      appBar: AppBar(
+        title: Text('Profile'),
+        centerTitle: true,
+      ),
       body: SingleChildScrollView(
         padding: EdgeInsets.all(16.0),
         child: Column(
@@ -66,9 +129,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(name, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  Text(email, style: TextStyle(color: Colors.grey)),
-                  Text(phone, style: TextStyle(color: Colors.grey)),
+                  Text(
+                    name.isEmpty ? 'Loading...' : name,
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  Text(email.isEmpty ? 'Loading...' : email, style: TextStyle(color: Colors.grey)),
+                  Text(phone.isEmpty ? 'Loading...' : phone, style: TextStyle(color: Colors.grey)),
                 ],
               ),
             ],
@@ -79,7 +145,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               // Change Profile Picture Action
             },
             child: Text('Change Profile Picture'),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
           ),
           SizedBox(height: 16),
           buildTextField('Name', name, (value) {
@@ -97,6 +162,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               phone = value;
             });
           }),
+          SizedBox(height: 16),
           ElevatedButton(
             onPressed: () {
               // Save Changes Action
@@ -143,12 +209,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Text('Subscription', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           SizedBox(height: 8),
           Text('Current Plan: $currentPlan', style: TextStyle(fontSize: 16)),
-          SizedBox(height: 8),
+          SizedBox(height: 16),
           ElevatedButton(
             onPressed: () {
               // Open plan selection modal
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
             child: Text('Change Plan'),
           ),
         ],
@@ -169,26 +234,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
         children: [
           Text('Recent Orders', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           SizedBox(height: 8),
-          ...recentOrders.map((order) {
-            return ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text('Order #${order['id']}', style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text(order['date']!, style: TextStyle(color: Colors.grey)),
-              trailing: Text(order['status']!, style: TextStyle(color: Colors.black)),
-            );
-          }).toList(),
+          if (recentOrders.isEmpty)
+            Text('No recent orders found.', style: TextStyle(color: Colors.grey))
+          else
+            ...recentOrders.map((order) {
+              return ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Order #${order['id']}', style: TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(order['date'] ?? 'N/A', style: TextStyle(color: Colors.grey)),
+                trailing: Text(order['status'] ?? 'Unknown', style: TextStyle(color: Colors.black)),
+              );
+            }).toList(),
           SizedBox(height: 8),
-          TextButton(
+          ElevatedButton(
             onPressed: () {
-              // Navigate to full order history
+              // Navigate to Order History page
+              Navigator.push(context, MaterialPageRoute(builder: (context) => OrderTrackingScreen()));
             },
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.start,
-              children: [
-                Text('View All Orders', style: TextStyle(color: Colors.blue)),
-                Icon(Icons.arrow_forward, color: Colors.blue),
-              ],
-            ),
+            child: Text('View All Orders'),
           ),
         ],
       ),
@@ -207,13 +270,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
         SizedBox(height: 8),
         ElevatedButton(
-          onPressed: () {
-            // Sign Out action
-          },
+          onPressed: _signOut,
           child: Text('Sign Out'),
           style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
         ),
       ],
     );
+  }
+
+  Future<void> _signOut() async {
+    try {
+      await _auth.signOut();
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => LoginScreen()),
+            (Route<dynamic> route) => false,
+      );
+    } catch (e) {
+      print('Sign out error: $e');
+    }
   }
 }
