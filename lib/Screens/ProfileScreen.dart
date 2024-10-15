@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
 import 'LoginScreen.dart';
-import 'OrderTracking.dart'; // Import the Orders page
+import 'OrderTracking.dart';
+import 'SubscriptionScreen.dart';  // Import SubscriptionScreen
+import 'package:google_fonts/google_fonts.dart'; // Import google_fonts
 
 class ProfileScreen extends StatefulWidget {
   @override
@@ -10,12 +15,22 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  String currentPlan = 'Basic Plan'; // Can be dynamically set based on user data
+  String currentPlan = 'Basic Plan';
   String name = '';
   String email = '';
   String phone = '';
+  String profileImageUrl = '';
+  File? _image;
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final ImagePicker _picker = ImagePicker();
+  final TextEditingController nameController = TextEditingController();
+  final TextEditingController emailController = TextEditingController();
+  final TextEditingController phoneController = TextEditingController();
+  final FocusNode nameFocusNode = FocusNode();
+  final FocusNode emailFocusNode = FocusNode();
+  final FocusNode phoneFocusNode = FocusNode();
+
   List<Map<String, dynamic>> recentOrders = [];
 
   final List<Map<String, dynamic>> plans = [
@@ -34,7 +49,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _fetchUserProfile() async {
     try {
       User? currentUser = _auth.currentUser;
-
       if (currentUser != null) {
         DocumentSnapshot userDoc = await FirebaseFirestore.instance
             .collection('users')
@@ -46,6 +60,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
             name = userDoc['name'] ?? 'N/A';
             email = userDoc['email'] ?? 'N/A';
             phone = userDoc['phone'] ?? 'N/A';
+            profileImageUrl = userDoc['profilePhotoUrl'] ?? '';
+            nameController.text = name;
+            emailController.text = email;
+            phoneController.text = phone;
           });
         }
       }
@@ -72,14 +90,90 @@ class _ProfileScreenState extends State<ProfileScreen> {
           recentOrders = ordersSnapshot.docs.map((doc) {
             return {
               'id': doc.id,
-              'date': (doc['createdAt'] as Timestamp?)?.toDate().toString().split(' ')[0] ?? 'N/A',
+              'date': (doc['createdAt'] as Timestamp?)?.toDate().toLocal().toString().split(' ')[0] ?? 'N/A',
               'status': doc['status'] ?? 'Unknown',
             };
           }).toList();
         });
       }
     } catch (e) {
-      print('Error fetching recent orders: $e');
+      print('Error fetching orders: $e');
+    }
+  }
+
+  Future<void> _updateProfileImage(File imageFile) async {
+    try {
+      User? currentUser = _auth.currentUser;
+
+      if (currentUser != null) {
+        final storageRef = FirebaseStorage.instance.ref().child('profileImages/${currentUser.uid}');
+        final uploadTask = await storageRef.putFile(imageFile);
+        final downloadUrl = await uploadTask.ref.getDownloadURL();
+
+        await FirebaseFirestore.instance.collection('users').doc(currentUser.uid).update({
+          'profilePhotoUrl': downloadUrl,
+        });
+
+        setState(() {
+          profileImageUrl = downloadUrl;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Profile picture updated successfully')));
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to update profile picture')));
+    }
+  }
+
+  Future<void> _pickImage() async {
+    final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
+    if (pickedFile != null) {
+      setState(() {
+        _image = File(pickedFile.path);
+      });
+      _updateProfileImage(_image!);
+    }
+  }
+
+  Future<void> _updateUserProfile() async {
+    User? currentUser = _auth.currentUser;
+
+    if (currentUser != null) {
+      try {
+        await FirebaseFirestore.instance.collection('users').doc(currentUser.uid).update({
+          'name': nameController.text,
+          'email': emailController.text,
+          'phone': phoneController.text,
+        });
+
+        await currentUser.updateEmail(emailController.text);
+
+        setState(() {
+          name = nameController.text;
+          email = emailController.text;
+          phone = phoneController.text;
+        });
+
+        nameFocusNode.unfocus();
+        emailFocusNode.unfocus();
+        phoneFocusNode.unfocus();
+
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Profile updated successfully')));
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to update profile: $e')));
+      }
+    }
+  }
+
+  Future<void> _signOut() async {
+    try {
+      await _auth.signOut();
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => LoginScreen()),
+            (Route<dynamic> route) => false,
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to sign out')));
     }
   }
 
@@ -88,7 +182,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text('Profile'),
-        centerTitle: true,
       ),
       body: SingleChildScrollView(
         padding: EdgeInsets.all(16.0),
@@ -97,7 +190,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             buildProfileSection(),
             SizedBox(height: 16),
-            buildSubscriptionSection(),
+            buildSubscriptionSection(), // Subscription section
             SizedBox(height: 16),
             buildRecentOrdersSection(),
             SizedBox(height: 16),
@@ -111,6 +204,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget buildProfileSection() {
     return Container(
       padding: EdgeInsets.all(16.0),
+      width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10.0),
@@ -121,9 +215,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
         children: [
           Row(
             children: [
-              CircleAvatar(
-                radius: 40,
-                backgroundImage: NetworkImage('https://via.placeholder.com/100'),
+              Stack(
+                children: [
+                  CircleAvatar(
+                    radius: 40,
+                    backgroundImage: profileImageUrl.isEmpty
+                        ? NetworkImage('https://via.placeholder.com/100')
+                        : NetworkImage(profileImageUrl),
+                  ),
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: GestureDetector(
+                      onTap: _pickImage,
+                      child: CircleAvatar(
+                        radius: 15,
+                        backgroundColor: Colors.blue,
+                        child: Icon(Icons.edit, color: Colors.white, size: 18),
+                      ),
+                    ),
+                  ),
+                ],
               ),
               SizedBox(width: 16),
               Column(
@@ -140,42 +252,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ],
           ),
           SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: () {
-              // Change Profile Picture Action
-            },
-            child: Text('Change Profile Picture'),
-          ),
-          SizedBox(height: 16),
-          buildTextField('Name', name, (value) {
-            setState(() {
-              name = value;
-            });
-          }),
-          buildTextField('Email', email, (value) {
-            setState(() {
-              email = value;
-            });
-          }),
-          buildTextField('Phone', phone, (value) {
-            setState(() {
-              phone = value;
-            });
-          }),
+          buildTextField('Name', nameController, nameFocusNode),
+          buildTextField('Email', emailController, emailFocusNode),
+          buildTextField('Phone', phoneController, phoneFocusNode),
           SizedBox(height: 16),
           ElevatedButton(
-            onPressed: () {
-              // Save Changes Action
-            },
+            onPressed: _updateUserProfile,
             child: Text('Save Changes'),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              minimumSize: Size(double.infinity, 50),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget buildTextField(String label, String value, Function(String) onChanged) {
+  Widget buildTextField(String label, TextEditingController controller, FocusNode focusNode) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12.0),
       child: Column(
@@ -183,9 +277,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         children: [
           Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
           TextField(
-            onChanged: onChanged,
+            controller: controller,
+            focusNode: focusNode,
             decoration: InputDecoration(
-              hintText: value,
               border: OutlineInputBorder(),
               contentPadding: EdgeInsets.all(12.0),
             ),
@@ -195,9 +289,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // Subscription section with navigation to SubscriptionScreen
   Widget buildSubscriptionSection() {
     return Container(
       padding: EdgeInsets.all(16.0),
+      width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10.0),
@@ -212,9 +308,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
           SizedBox(height: 16),
           ElevatedButton(
             onPressed: () {
-              // Open plan selection modal
+              // Navigate to SubscriptionScreen when "Change Plan" is clicked
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => SubscriptionScreen()),
+              );
             },
             child: Text('Change Plan'),
+            style: ElevatedButton.styleFrom(
+              minimumSize: Size(double.infinity, 50),
+            ),
           ),
         ],
       ),
@@ -224,6 +327,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget buildRecentOrdersSection() {
     return Container(
       padding: EdgeInsets.all(16.0),
+      width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10.0),
@@ -248,10 +352,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           SizedBox(height: 8),
           ElevatedButton(
             onPressed: () {
-              // Navigate to Order History page
               Navigator.push(context, MaterialPageRoute(builder: (context) => OrderTrackingScreen()));
             },
             child: Text('View All Orders'),
+            style: ElevatedButton.styleFrom(
+              minimumSize: Size(double.infinity, 50),
+            ),
           ),
         ],
       ),
@@ -266,27 +372,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
             // Support action
           },
           child: Text('Support'),
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.orange,
+            minimumSize: Size(double.infinity, 50),
+          ),
         ),
         SizedBox(height: 8),
         ElevatedButton(
           onPressed: _signOut,
           child: Text('Sign Out'),
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.red,
+            minimumSize: Size(double.infinity, 50),
+          ),
         ),
       ],
     );
-  }
-
-  Future<void> _signOut() async {
-    try {
-      await _auth.signOut();
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (context) => LoginScreen()),
-            (Route<dynamic> route) => false,
-      );
-    } catch (e) {
-      print('Sign out error: $e');
-    }
   }
 }
