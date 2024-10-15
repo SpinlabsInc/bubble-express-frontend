@@ -1,4 +1,6 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'NotificationsScreen.dart';
 import 'OrderTracking.dart';
 import 'ProfileScreen.dart';
@@ -26,7 +28,11 @@ class Promotion {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
   String currentPlan = 'Basic Plan';
+  List<Map<String, dynamic>> recentOrders = [];
 
   final List<Plan> plans = [
     Plan(name: 'Basic Plan', price: 29.99, features: ['Wash', 'Fold', 'Iron']),
@@ -41,8 +47,41 @@ class _HomeScreenState extends State<HomeScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _fetchRecentOrders(); // Fetch the recent orders when the widget is initialized
+  }
+
+  // Fetch the recent orders for the current logged-in user
+  Future<void> _fetchRecentOrders() async {
+    User? currentUser = _auth.currentUser;
+    if (currentUser != null) {
+      try {
+        DocumentReference userRef = _firestore.collection('users').doc(currentUser.uid);
+        QuerySnapshot snapshot = await _firestore
+            .collection('orders')
+            .where('userId', isEqualTo: userRef)
+            .orderBy('createdAt', descending: true)
+            .limit(3) // Fetch the 3 most recent orders
+            .get();
+
+        setState(() {
+          recentOrders = snapshot.docs.map((doc) {
+            return {
+              'id': doc.id,
+              'status': doc['status'] ?? 'No status',
+              'createdAt': (doc['createdAt'] as Timestamp?)?.toDate().toString().split(' ')[0] ?? 'No date',
+            };
+          }).toList();
+        });
+      } catch (e) {
+        print('Error fetching recent orders: $e');
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // Finding the current plan details
     Plan? currentPlanDetails = plans.firstWhere((plan) => plan.name == currentPlan, orElse: () => plans[0]);
 
     return Scaffold(
@@ -53,19 +92,14 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: EdgeInsets.all(16.0),
         child: Column(
           children: [
-            // Promotions Section
             _buildPromotionsSection(),
             SizedBox(height: 16),
-            // Quick Actions Section
             _buildQuickActionsSection(context),
             SizedBox(height: 16),
-            // Current Plan Section
             _buildCurrentPlanSection(currentPlanDetails),
             SizedBox(height: 16),
-            // Available Plans Section
             _buildAvailablePlansSection(),
             SizedBox(height: 16),
-            // Recent Orders Section
             _buildRecentOrdersSection(context),
           ],
         ),
@@ -191,7 +225,6 @@ class _HomeScreenState extends State<HomeScreen> {
           SizedBox(height: 8),
           ElevatedButton(
             onPressed: () {
-              // Navigate to Profile Screen to upgrade plan
               Navigator.push(context, MaterialPageRoute(builder: (context) => ProfileScreen()));
             },
             child: Text('Upgrade Plan'),
@@ -248,12 +281,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildRecentOrdersSection(BuildContext context) {
-    // Mock data for recent orders
-    final recentOrders = [
-      {'orderNumber': '#1234', 'status': 'In Progress'},
-      {'orderNumber': '#1233', 'status': 'Delivered'},
-    ];
-
     return Container(
       padding: EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -269,29 +296,41 @@ class _HomeScreenState extends State<HomeScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           SizedBox(height: 8),
-          ...recentOrders.map((order) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Order ${order['orderNumber']}',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  'Status: ${order['status']}',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                ),
-                Divider(),
-              ],
-            );
-          }).toList(),
+          if (recentOrders.isEmpty)
+            Text('No recent orders found.', style: TextStyle(color: Colors.grey))
+          else
+            ...recentOrders.map((order) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Order #${order['id']}',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    'Status: ${order['status']}',
+                    style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                  ),
+                  Text(
+                    'Date: ${order['createdAt']}',
+                    style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                  ),
+                  Divider(),
+                ],
+              );
+            }).toList(),
           SizedBox(height: 8),
           TextButton(
             onPressed: () {
-              // Navigate to Orders Screen
               Navigator.push(context, MaterialPageRoute(builder: (context) => OrderTrackingScreen()));
             },
-            child: Text('View All Orders', style: TextStyle(color: Colors.blue)),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.start,
+              children: [
+                Text('View All Orders', style: TextStyle(color: Colors.blue)),
+                Icon(Icons.arrow_forward, color: Colors.blue),
+              ],
+            ),
           ),
         ],
       ),

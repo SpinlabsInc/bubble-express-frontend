@@ -1,12 +1,31 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class NotificationsScreen extends StatelessWidget {
-  final List<Map<String, String>> notifications = [
-    {'id': '1', 'type': 'order', 'message': 'Your order #1234 is ready for pickup', 'time': '2 hours ago'},
-    {'id': '2', 'type': 'subscription', 'message': 'Your subscription will renew in 3 days', 'time': '1 day ago'},
-    {'id': '3', 'type': 'order', 'message': 'Your order #1233 has been delivered', 'time': '2 days ago'},
-  ];
+  // Get the current logged-in user
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
+  // Fetch notifications for the logged-in user from Firestore
+  Stream<QuerySnapshot> fetchUserNotifications() {
+    User? user = _auth.currentUser;
+
+    if (user == null) {
+      // If no user is logged in, return an empty stream
+      return const Stream.empty();
+    }
+
+    // Query Firestore to fetch notifications specific to the current user
+    DocumentReference userDocRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+
+    return FirebaseFirestore.instance
+        .collection('notifications')
+        .where('userId', isEqualTo: userDocRef) // Match userId with the logged-in user reference
+        .orderBy('createdAt', descending: true)
+        .snapshots();
+  }
+
+  // Get appropriate icon based on notification type
   Widget getIcon(String type) {
     switch (type) {
       case 'order':
@@ -26,54 +45,60 @@ class NotificationsScreen extends StatelessWidget {
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Notifications',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: 16),
-            Expanded(
-              child: ListView.builder(
-                itemCount: notifications.length,
-                itemBuilder: (context, index) {
-                  final notification = notifications[index];
-                  return Container(
-                    margin: EdgeInsets.only(bottom: 16),
-                    padding: EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
-                    ),
-                    child: Row(
-                      children: [
-                        getIcon(notification['type']!),
-                        SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                notification['message']!,
-                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                              ),
-                              SizedBox(height: 4),
-                              Text(
-                                notification['time']!,
-                                style: TextStyle(fontSize: 14, color: Colors.grey),
-                              ),
-                            ],
-                          ),
+        child: StreamBuilder<QuerySnapshot>(
+          stream: fetchUserNotifications(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return Center(child: CircularProgressIndicator());
+            }
+
+            if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+              return Center(child: Text("No notifications available"));
+            }
+
+            // Map the data from Firestore
+            final notifications = snapshot.data!.docs;
+
+            return ListView.builder(
+              itemCount: notifications.length,
+              itemBuilder: (context, index) {
+                final notification = notifications[index];
+                return Container(
+                  margin: EdgeInsets.only(bottom: 16),
+                  padding: EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                  ),
+                  child: Row(
+                    children: [
+                      getIcon(notification['data'] ?? 'default'), // Assuming `data` field holds the type
+                      SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              notification['message'] ?? 'No message', // Assuming `message` field holds the notification message
+                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              notification['createdAt'] != null
+                                  ? (notification['createdAt'] as Timestamp).toDate().toString()
+                                  : 'Time not available',
+                              style: TextStyle(fontSize: 14, color: Colors.grey),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
         ),
       ),
     );
