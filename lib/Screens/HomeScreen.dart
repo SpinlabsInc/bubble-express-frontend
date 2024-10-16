@@ -5,6 +5,7 @@ import 'NotificationsScreen.dart';
 import 'OrderTracking.dart';
 import 'ProfileScreen.dart';
 import 'ScheduleScreen.dart';
+import 'SubscriptionScreen.dart';
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -14,9 +15,9 @@ class HomeScreen extends StatefulWidget {
 class Plan {
   final String name;
   final double price;
-  final List<String> features;
+  final String description;
 
-  Plan({required this.name, required this.price, required this.features});
+  Plan({required this.name, required this.price, required this.description});
 }
 
 class Promotion {
@@ -31,28 +32,84 @@ class _HomeScreenState extends State<HomeScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  String currentPlan = 'Basic Plan';
+  Plan? currentPlan;
+  List<Plan> availablePlans = [];
   List<Map<String, dynamic>> recentOrders = [];
-
-  final List<Plan> plans = [
-    Plan(name: 'Basic Plan', price: 29.99, features: ['Wash', 'Fold', 'Iron']),
-    Plan(name: 'Premium Plan', price: 49.99, features: ['Premium Wash', 'Fold', 'Iron', 'Stain Removal']),
-    Plan(name: 'Premium Plus Plan', price: 69.99, features: ['All Premium features', 'Dry Cleaning', 'Saree Rolling', 'Shoe Cleaning']),
-  ];
 
   final List<Promotion> promotions = [
     Promotion(id: 1, title: '20% Off Your First Order', description: 'Use code FIRST20 at checkout'),
-    Promotion(id: 2, title: 'Free Pickup on Orders Over \$50', description: 'Limited time offer'),
-    Promotion(id: 3, title: 'Refer a Friend, Get \$10 Off', description: 'Share your referral code now'),
+    Promotion(id: 2, title: 'Free Pickup on Orders Over ₹50', description: 'Limited time offer'),
+    Promotion(id: 3, title: 'Refer a Friend, Get ₹100 Off', description: 'Share your referral code now'),
   ];
 
   @override
   void initState() {
     super.initState();
+    _fetchCurrentPlan();
+    _fetchAvailablePlans();
     _fetchRecentOrders(); // Fetch the recent orders when the widget is initialized
   }
 
-  // Fetch the recent orders for the current logged-in user
+  Future<void> _fetchCurrentPlan() async {
+    User? currentUser = _auth.currentUser;
+    if (currentUser != null) {
+      try {
+        QuerySnapshot snapshot = await _firestore
+            .collection('subscriptions')
+            .where('userId', isEqualTo: _firestore.collection('users').doc(currentUser.uid))
+            .orderBy('startDate', descending: true)
+            .limit(1)
+            .get();
+
+        if (snapshot.docs.isNotEmpty) {
+          var subscription = snapshot.docs.first;
+
+          // Fetch the plan reference from the 'services' field
+          DocumentReference planRef = subscription['services'] as DocumentReference;
+
+          // Ensure the plan reference is valid before fetching the plan details
+          DocumentSnapshot planSnapshot = await planRef.get();
+
+          if (planSnapshot.exists) {
+            setState(() {
+              currentPlan = Plan(
+                name: planSnapshot['name'],
+                price: planSnapshot['price'].toDouble(),
+                description: planSnapshot['description'],
+              );
+            });
+          } else {
+            print('Plan not found');
+          }
+        } else {
+          print('No subscription found for the user');
+        }
+      } catch (e) {
+        print('Error fetching current plan: $e');
+      }
+    }
+  }
+
+  Future<void> _fetchAvailablePlans() async {
+    try {
+      QuerySnapshot snapshot = await _firestore.collection('plans').get();
+
+      List<Plan> fetchedPlans = snapshot.docs.map((doc) {
+        return Plan(
+          name: doc['name'],
+          price: doc['price'].toDouble(),
+          description: doc['description'],
+        );
+      }).toList();
+
+      setState(() {
+        availablePlans = fetchedPlans;
+      });
+    } catch (e) {
+      print('Error fetching available plans: $e');
+    }
+  }
+
   Future<void> _fetchRecentOrders() async {
     User? currentUser = _auth.currentUser;
     if (currentUser != null) {
@@ -82,8 +139,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    Plan? currentPlanDetails = plans.firstWhere((plan) => plan.name == currentPlan, orElse: () => plans[0]);
-
     return Scaffold(
       appBar: AppBar(
         title: Text('Welcome to LaundryApp'),
@@ -96,11 +151,11 @@ class _HomeScreenState extends State<HomeScreen> {
             SizedBox(height: 16),
             _buildQuickActionsSection(context),
             SizedBox(height: 16),
-            _buildCurrentPlanSection(currentPlanDetails),
+            _buildCurrentPlanSection(),
             SizedBox(height: 16),
             _buildAvailablePlansSection(),
             SizedBox(height: 16),
-            _buildRecentOrdersSection(context),
+            _buildRecentOrdersSection(),
           ],
         ),
       ),
@@ -202,8 +257,18 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildCurrentPlanSection(Plan currentPlanDetails) {
+  Widget _buildCurrentPlanSection() {
+    if (currentPlan == null) {
+      return Center(
+        child: Text(
+          'No current plan found.',
+          style: TextStyle(fontSize: 16, color: Colors.grey),
+        ),
+      );
+    }
+
     return Container(
+      width: double.infinity, // Make it fit the screen width
       padding: EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -219,15 +284,24 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           SizedBox(height: 8),
           Text(
-            '${currentPlanDetails.name} - \$${currentPlanDetails.price.toStringAsFixed(2)}/month',
+            '${currentPlan!.name} - ₹${currentPlan!.price.toStringAsFixed(2)}/month',
             style: TextStyle(fontSize: 16),
           ),
           SizedBox(height: 8),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.push(context, MaterialPageRoute(builder: (context) => ProfileScreen()));
-            },
-            child: Text('Upgrade Plan'),
+          Text(
+            currentPlan!.description,
+            style: TextStyle(fontSize: 14),
+          ),
+          SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity, // Make the button fit the container width
+            child: ElevatedButton(
+              onPressed: () {
+                // Navigate to the SubscriptionScreen when button is clicked
+                Navigator.push(context, MaterialPageRoute(builder: (context) => SubscriptionScreen()));
+              },
+              child: Text('Upgrade Plan'),
+            ),
           ),
         ],
       ),
@@ -235,6 +309,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildAvailablePlansSection() {
+    if (availablePlans.isEmpty) {
+      return Center(
+        child: Text(
+          'No plans available.',
+          style: TextStyle(fontSize: 16, color: Colors.grey),
+        ),
+      );
+    }
+
     return Container(
       padding: EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -250,37 +333,49 @@ class _HomeScreenState extends State<HomeScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           SizedBox(height: 8),
-          ...plans.map((plan) {
-            bool isCurrentPlan = plan.name == currentPlan;
-            return Container(
-              margin: EdgeInsets.symmetric(vertical: 4),
-              padding: EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: isCurrentPlan ? Colors.blue[50] : Colors.grey[100],
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${plan.name} - \$${plan.price.toStringAsFixed(2)}/month',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    plan.features.join(', '),
-                    style: TextStyle(fontSize: 14),
-                  ),
-                ],
-              ),
-            );
-          }).toList(),
+          GridView.builder(
+            shrinkWrap: true, // Prevents overflow
+            physics: NeverScrollableScrollPhysics(), // Disable internal scrolling
+            itemCount: availablePlans.length,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
+              childAspectRatio: 1.5, // Adjusted aspect ratio to increase height
+            ),
+            itemBuilder: (context, index) {
+              Plan plan = availablePlans[index];
+              return Container(
+                height: 150, // Increased the height
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 6)],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${plan.name} - ₹${plan.price.toStringAsFixed(2)}/month',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      plan.description,
+                      style: TextStyle(fontSize: 14),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildRecentOrdersSection(BuildContext context) {
+  Widget _buildRecentOrdersSection() {
     return Container(
       padding: EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -297,7 +392,12 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           SizedBox(height: 8),
           if (recentOrders.isEmpty)
-            Text('No recent orders found.', style: TextStyle(color: Colors.grey))
+            Center(
+              child: Text(
+                'No recent orders found.',
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+            )
           else
             ...recentOrders.map((order) {
               return Column(
@@ -315,21 +415,20 @@ class _HomeScreenState extends State<HomeScreen> {
                     'Date: ${order['createdAt']}',
                     style: TextStyle(fontSize: 14, color: Colors.grey[600]),
                   ),
-                  Divider(),
                 ],
               );
             }).toList(),
           SizedBox(height: 8),
-          TextButton(
-            onPressed: () {
-              Navigator.push(context, MaterialPageRoute(builder: (context) => OrderTrackingScreen()));
-            },
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.start,
-              children: [
-                Text('View All Orders', style: TextStyle(color: Colors.blue)),
-                Icon(Icons.arrow_forward, color: Colors.blue),
-              ],
+          Center(
+            child: SizedBox(
+              width: double.infinity, // Make button fit the container width
+              child: ElevatedButton(
+                onPressed: () {
+                  // Navigate to the OrderTracking page when button is clicked
+                  Navigator.push(context, MaterialPageRoute(builder: (context) => OrderTrackingScreen()));
+                },
+                child: Text('View All Orders'),
+              ),
             ),
           ),
         ],
