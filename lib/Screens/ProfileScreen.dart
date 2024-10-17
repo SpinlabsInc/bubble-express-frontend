@@ -15,7 +15,7 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  String currentPlan = 'Basic Plan';
+  String? currentPlan;
   String name = '';
   String email = '';
   String phone = '';
@@ -33,17 +33,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   List<Map<String, dynamic>> recentOrders = [];
 
-  final List<Map<String, dynamic>> plans = [
-    {'name': 'Basic Plan', 'price': 29.99, 'services': ['Wash', 'Fold', 'Iron']},
-    {'name': 'Premium Plan', 'price': 49.99, 'services': ['Premium Wash', 'Fold', 'Iron', 'Stain Removal']},
-    {'name': 'Premium Plus Plan', 'price': 69.99, 'services': ['Premium Wash', 'Fold', 'Iron', 'Stain Removal', 'Dry Cleaning', 'Saree Rolling', 'Shoe Cleaning']},
-  ];
-
   @override
   void initState() {
     super.initState();
     _fetchUserProfile();
     _fetchUserOrders();
+    _fetchCurrentPlan();  // Fetch subscription plan
   }
 
   Future<void> _fetchUserProfile() async {
@@ -98,6 +93,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     } catch (e) {
       print('Error fetching orders: $e');
+    }
+  }
+
+  Future<void> _fetchCurrentPlan() async {
+    User? currentUser = _auth.currentUser;
+    if (currentUser != null) {
+      try {
+        QuerySnapshot snapshot = await FirebaseFirestore.instance
+            .collection('subscriptions')
+            .where('userId', isEqualTo: FirebaseFirestore.instance.collection('users').doc(currentUser.uid))
+            .orderBy('startDate', descending: true)
+            .limit(1)
+            .get();
+
+        if (snapshot.docs.isNotEmpty) {
+          var subscription = snapshot.docs.first;
+
+          // Fetch the plan reference from the 'services' field
+          DocumentReference planRef = subscription['services'] as DocumentReference;
+
+          // Ensure the plan reference is valid before fetching the plan details
+          DocumentSnapshot planSnapshot = await planRef.get();
+
+          if (planSnapshot.exists) {
+            setState(() {
+              currentPlan = planSnapshot['name'];  // Update current plan from Firestore
+            });
+          } else {
+            print('Plan not found');
+          }
+        } else {
+          print('No subscription found for the user');
+        }
+      } catch (e) {
+        print('Error fetching current plan: $e');
+      }
     }
   }
 
@@ -289,7 +320,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // Subscription section with navigation to SubscriptionScreen
   Widget buildSubscriptionSection() {
     return Container(
       padding: EdgeInsets.all(16.0),
@@ -304,7 +334,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
         children: [
           Text('Subscription', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           SizedBox(height: 8),
-          Text('Current Plan: $currentPlan', style: TextStyle(fontSize: 16)),
+          Text(
+            currentPlan != null
+                ? 'Current Plan: $currentPlan'
+                : 'No current plan found.',
+            style: TextStyle(fontSize: 16),
+          ),
           SizedBox(height: 16),
           ElevatedButton(
             onPressed: () {
