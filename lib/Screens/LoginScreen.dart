@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import '../main.dart';
 import 'SignupScreen.dart';
+import '../main.dart';
 
 class LoginScreen extends StatefulWidget {
   @override
@@ -18,6 +18,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
 
+  // Regular Email/Password Sign In
   Future<void> _signIn() async {
     try {
       UserCredential userCredential = await _auth.signInWithEmailAndPassword(
@@ -47,32 +48,48 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // Google Sign In
   Future<void> _signInWithGoogle() async {
     try {
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
       if (googleUser != null) {
-        final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+        final GoogleSignInAuthentication googleAuth =
+        await googleUser.authentication;
         final AuthCredential credential = GoogleAuthProvider.credential(
           accessToken: googleAuth.accessToken,
           idToken: googleAuth.idToken,
         );
 
-        UserCredential userCredential =
-        await _auth.signInWithCredential(credential);
-
-        DocumentSnapshot userDoc = await _firestore
+        QuerySnapshot userQuery = await _firestore
             .collection('users')
-            .doc(userCredential.user!.uid)
+            .where('email', isEqualTo: googleUser.email)
             .get();
 
-        if (userDoc.exists) {
-          String role = userDoc['role'];
-          print('User role: $role');
+        if (userQuery.docs.isNotEmpty) {
+          UserCredential userCredential =
+          await _auth.signInWithCredential(credential);
 
-          Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (_) => MainScreen()));
+          DocumentSnapshot userDoc = await _firestore
+              .collection('users')
+              .doc(userCredential.user!.uid)
+              .get();
+
+          if (userDoc.exists) {
+            String role = userDoc['role'];
+            print('User role: $role');
+
+            Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (_) => MainScreen()));
+          }
         } else {
-          print('No user data found');
+          print('No user account found for this email');
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+            Text('No account found for this email. Please sign up first.'),
+          ));
+
+          await _auth.signOut();
+          await _googleSignIn.disconnect();
         }
       }
     } catch (e) {
@@ -81,6 +98,12 @@ class _LoginScreenState extends State<LoginScreen> {
         content: Text('Failed to sign in with Google: $e'),
       ));
     }
+  }
+
+  // Facebook Login (Functionality left blank for now)
+  Future<void> _signInWithFacebook() async {
+    // Functionality to be implemented later
+    print("Facebook login is not implemented yet.");
   }
 
   @override
@@ -130,10 +153,12 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: () {
-                // Facebook sign-in functionality can be implemented later
-              },
-              icon: Icon(Icons.facebook, color: Colors.blue),
+              onPressed: _signInWithFacebook,
+              icon: Image.asset(
+                'assets/facebook_logo.png',
+                height: 24,
+                width: 24,
+              ),
               label: Text('Sign in with Facebook'),
               style: ElevatedButton.styleFrom(
                   minimumSize: Size(double.infinity, 50)),

@@ -146,6 +146,7 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SingleChildScrollView(
         padding: EdgeInsets.all(16.0),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildPromotionsSection(),
             SizedBox(height: 16),
@@ -208,7 +209,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         SizedBox(height: 8),
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween, // Adjust to spread icons evenly
           children: [
             _buildQuickAction(
               icon: Icons.schedule,
@@ -232,6 +233,14 @@ class _HomeScreenState extends State<HomeScreen> {
               label: 'Notifications',
               onTap: () {
                 Navigator.push(context, MaterialPageRoute(builder: (context) => NotificationsScreen()));
+              },
+            ),
+            _buildQuickAction(
+              icon: Icons.subscriptions,
+              color: Colors.red,
+              label: 'Subscriptions',
+              onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (context) => SubscriptionScreen()));
               },
             ),
           ],
@@ -333,20 +342,13 @@ class _HomeScreenState extends State<HomeScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           SizedBox(height: 8),
-          GridView.builder(
-            shrinkWrap: true, // Prevents overflow
-            physics: NeverScrollableScrollPhysics(), // Disable internal scrolling
-            itemCount: availablePlans.length,
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-              childAspectRatio: 1.5, // Adjusted aspect ratio to increase height
-            ),
-            itemBuilder: (context, index) {
-              Plan plan = availablePlans[index];
+          Wrap(
+            spacing: 8.0, // space between items
+            runSpacing: 8.0, // space between lines
+            children: availablePlans.map((plan) {
               return Container(
-                height: 150, // Increased the height
+                width: MediaQuery.of(context).size.width * 0.4, // Adjust to fit items in a row
+                height: 120, // Set fixed height to equalize containers
                 padding: EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: Colors.blue[50],
@@ -364,11 +366,13 @@ class _HomeScreenState extends State<HomeScreen> {
                     Text(
                       plan.description,
                       style: TextStyle(fontSize: 14),
+                      maxLines: 2, // To ensure text fits within the height limit
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
               );
-            },
+            }).toList(),
           ),
         ],
       ),

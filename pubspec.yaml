@@ -37,6 +37,7 @@ flutter:
   assets:
     - assets/google_logo.png
     - assets/default_profile_icon.png
+    - assets/facebook_logo.png
 
   # You can add fonts here if you plan to use custom fonts.
   # fonts:
