@@ -1,31 +1,36 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'ScheduleScreen.dart';
 
 class NotificationsScreen extends StatelessWidget {
-  // Get the current logged-in user
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  // Fetch notifications for the logged-in user from Firestore
+  // Fetch notifications for the logged-in user
   Stream<QuerySnapshot> fetchUserNotifications() {
     User? user = _auth.currentUser;
-
     if (user == null) {
-      // If no user is logged in, return an empty stream
       return const Stream.empty();
     }
 
-    // Query Firestore to fetch notifications specific to the current user
     DocumentReference userDocRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
 
     return FirebaseFirestore.instance
         .collection('notifications')
-        .where('userId', isEqualTo: userDocRef) // Match userId with the logged-in user reference
+        .where('userId', isEqualTo: userDocRef)
         .orderBy('createdAt', descending: true)
         .snapshots();
   }
 
-  // Get appropriate icon based on notification type
+  // Mark notification as read
+  Future<void> markNotificationAsRead(String notificationId) async {
+    await FirebaseFirestore.instance
+        .collection('notifications')
+        .doc(notificationId)
+        .update({'isRead': true});
+  }
+
+  // Get the icon based on notification type
   Widget getIcon(String type) {
     switch (type) {
       case 'order':
@@ -56,44 +61,61 @@ class NotificationsScreen extends StatelessWidget {
               return Center(child: Text("No notifications available"));
             }
 
-            // Map the data from Firestore
             final notifications = snapshot.data!.docs;
 
             return ListView.builder(
               itemCount: notifications.length,
               itemBuilder: (context, index) {
                 final notification = notifications[index];
-                return Container(
-                  margin: EdgeInsets.only(bottom: 16),
-                  padding: EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
-                  ),
-                  child: Row(
-                    children: [
-                      getIcon(notification['data'] ?? 'default'), // Assuming `data` field holds the type
-                      SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              notification['message'] ?? 'No message', // Assuming `message` field holds the notification message
-                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              notification['createdAt'] != null
-                                  ? (notification['createdAt'] as Timestamp).toDate().toString()
-                                  : 'Time not available',
-                              style: TextStyle(fontSize: 14, color: Colors.grey),
-                            ),
-                          ],
+                bool isRead = notification['isRead'] ?? false;
+
+                return GestureDetector(
+                  onTap: () async {
+                    // Mark notification as read
+                    await markNotificationAsRead(notification.id);
+
+                    // Navigate to ScheduleScreen with the plan details
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ScheduleScreen(
+                          planId: notification['data'], // Assuming `data` holds the plan ID
                         ),
                       ),
-                    ],
+                    );
+                  },
+                  child: Container(
+                    margin: EdgeInsets.only(bottom: 16),
+                    padding: EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: isRead ? Colors.grey[300] : Colors.white, // Dull color if read
+                      borderRadius: BorderRadius.circular(10),
+                      boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                    ),
+                    child: Row(
+                      children: [
+                        getIcon(notification['data'] ?? 'default'),
+                        SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                notification['message'] ?? 'No message',
+                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                              ),
+                              SizedBox(height: 4),
+                              Text(
+                                notification['createdAt'] != null
+                                    ? (notification['createdAt'] as Timestamp).toDate().toString()
+                                    : 'Time not available',
+                                style: TextStyle(fontSize: 14, color: Colors.grey),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 );
               },

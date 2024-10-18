@@ -6,6 +6,11 @@ import 'package:intl/intl.dart';
 import 'package:geocoding/geocoding.dart';
 
 class ScheduleScreen extends StatefulWidget {
+  final String? planId; // Accepting the planId passed from the NotificationsScreen
+  final String? orderId; // Added to handle existing order updates
+
+  ScheduleScreen({this.planId, this.orderId});
+
   @override
   _ScheduleScreenState createState() => _ScheduleScreenState();
 }
@@ -32,7 +37,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   bool showDropMap = false;
 
   final List<String> serviceTypes = ['Pickup every 2 days', 'Pickup every 3 days'];
-
   final List<String> daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   final List<String> timeFrames = [
     '6:00 AM - 9:00 AM', '9:00 AM - 12:00 PM', '12:00 PM - 3:00 PM',
@@ -42,10 +46,62 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   GoogleMapController? mapController;
   Set<Marker> markers = {};
 
+  List<Map<String, dynamic>> userOrders = [];
+
   @override
   void initState() {
     super.initState();
     fetchPlansFromFirebase();
+    if (widget.orderId != null) {
+      fetchExistingOrder(widget.orderId!); // Fetching existing order data
+    } else {
+      fetchUserOrders(); // For new orders, fetch all the user’s existing orders
+    }
+
+    // If a planId is passed from the notification, fetch the plan details
+    if (widget.planId != null) {
+      fetchPlanById(widget.planId);
+    }
+  }
+
+  // Fetch existing order details and pre-fill the form
+  Future<void> fetchExistingOrder(String orderId) async {
+    try {
+      DocumentSnapshot orderSnapshot =
+      await FirebaseFirestore.instance.collection('subscriptions').doc(orderId).get();
+
+      if (orderSnapshot.exists) {
+        setState(() {
+          selectedPlan = orderSnapshot['services'].id;
+          serviceType = orderSnapshot['serviceType'];
+          selectedPickupDate = orderSnapshot['startDate'].toDate();
+          deliveryDate = orderSnapshot['endDate'].toDate();
+          pickupController.text = orderSnapshot['pickupLoc'].toString();
+          dropController.text = orderSnapshot['dropLoc'].toString();
+          pickupLocation = LatLng(orderSnapshot['pickupLoc'].latitude, orderSnapshot['pickupLoc'].longitude);
+          dropLocation = LatLng(orderSnapshot['dropLoc'].latitude, orderSnapshot['dropLoc'].longitude);
+          timeSlots = orderSnapshot['timeSlots'].cast<String>();
+          selectedDays = orderSnapshot['selectedDays'].cast<String>();
+        });
+      }
+    } catch (error) {
+      showError('Failed to fetch order details.');
+    }
+  }
+
+  Future<void> fetchPlanById(String? planId) async {
+    if (planId == null) return;
+
+    try {
+      DocumentSnapshot planDoc = await FirebaseFirestore.instance.collection('plans').doc(planId).get();
+
+      // You can now use the plan details as needed (e.g., set the selectedPlan)
+      setState(() {
+        selectedPlan = planId; // Assuming the planId refers to the selected plan
+      });
+    } catch (error) {
+      showError("Error fetching plan details.");
+    }
   }
 
   Future<void> fetchPlansFromFirebase() async {
@@ -70,6 +126,208 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       });
     } catch (error) {
       showError("Error fetching plans");
+    }
+  }
+
+  Future<void> fetchUserOrders() async {
+    try {
+      User? user = FirebaseAuth.instance.currentUser;
+      if (user == null) return; // User not logged in, no need to proceed
+
+      String userId = user.uid;
+      CollectionReference subscriptionsRef = FirebaseFirestore.instance.collection('subscriptions');
+      QuerySnapshot snapshot = await subscriptionsRef
+          .where('userId', isEqualTo: FirebaseFirestore.instance.collection('users').doc(userId))
+          .get();
+
+      // Fetch the plan name along with subscription data
+      List<Map<String, dynamic>> fetchedOrders = await Future.wait(snapshot.docs.map((doc) async {
+        DocumentReference servicesRef = doc['services'];
+        DocumentSnapshot planSnapshot = await servicesRef.get(); // Fetch plan details
+
+        // Only fetch the plan name
+        String? planName = planSnapshot.exists ? planSnapshot['name'] : 'No plan name';
+
+        return {
+          'id': doc.id,
+          'pickupLoc': doc['pickupLoc'],
+          'dropLoc': doc['dropLoc'],
+          'serviceType': doc['serviceType'],
+          'startDate': doc['startDate']?.toDate(),
+          'endDate': doc['endDate']?.toDate(),
+          'paymentDetails': doc['paymentDetails'],
+          'planName': planName, // Only store the plan name
+        };
+      }).toList());
+
+      setState(() {
+        userOrders = fetchedOrders;
+      });
+    } catch (error) {
+      showError('Error fetching your orders.');
+    }
+  }
+
+  Future<void> cancelOrder(String orderId) async {
+    try {
+      await FirebaseFirestore.instance.collection('subscriptions').doc(orderId).update({'isActive': false});
+      setState(() {
+        userOrders.removeWhere((order) => order['id'] == orderId);
+      });
+      showSuccess('Order canceled successfully.');
+    } catch (error) {
+      showError('Failed to cancel the order.');
+    }
+  }
+
+  Future<void> showPlanUpgradeDialog(String orderId) async {
+    final currentOrder = userOrders.firstWhere((order) => order['id'] == orderId);
+    String? currentPlanName = currentOrder['planName'];
+
+    showDialog(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: const Text('Upgrade Plan'),
+          content: FutureBuilder<QuerySnapshot>(
+            future: FirebaseFirestore.instance.collection('plans').get(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const CircularProgressIndicator();
+              }
+
+              if (!snapshot.hasData) {
+                return const Text('No plans available.');
+              }
+
+              final plans = snapshot.data!.docs;
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: plans.map((planDoc) {
+                  String planName = planDoc['name'];
+                  bool isCurrentPlan = planName == currentPlanName;
+
+                  return ListTile(
+                    title: Text(planName),
+                    subtitle: Text(isCurrentPlan ? 'This is your current plan' : planDoc['description']),
+                    trailing: Text('₹${planDoc['price']}'),
+                    onTap: isCurrentPlan ? null : () {
+                      Navigator.of(context).pop();
+                      showConfirmUpgradeDialog(orderId, planDoc.id); // Pass the selected plan ID
+                    },
+                    tileColor: isCurrentPlan ? Colors.grey[300] : null,
+                    enabled: !isCurrentPlan, // Disable the current plan
+                  );
+                }).toList(),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> showConfirmUpgradeDialog(String orderId, String? selectedPlanId) async {
+    // Capture the current context before doing anything asynchronous
+    final BuildContext dialogContext = context;
+
+    // Display the confirmation dialog
+    await showDialog(
+      context: dialogContext,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Confirm Plan Upgrade'),
+          content: const Text('Are you sure you want to upgrade your plan?'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                // Dismiss the confirmation dialog
+                Navigator.of(context, rootNavigator: true).pop();
+              },
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                // First dismiss the confirmation modal
+                Navigator.of(context, rootNavigator: true).pop();
+
+                // Show success modal immediately
+                _showSuccessModal(dialogContext);
+
+                // Perform the upgrade operation asynchronously in the background
+                updateSubscriptionPlan(orderId, selectedPlanId);
+              },
+              child: const Text('Confirm'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Define a function to show the success modal immediately
+  void _showSuccessModal(BuildContext context) {
+    // Ensure the modal is called only once by calling showDialog once
+    showDialog(
+      context: context,
+      barrierDismissible: false,  // Prevent closing by tapping outside
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Success'),
+          content: const Text('Plan upgraded successfully!'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                // Dismiss the success modal and ensure no dialogs remain
+                Navigator.of(context, rootNavigator: true).pop();
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> updateSubscriptionPlan(String orderId, String? selectedPlanId) async {
+    try {
+      DocumentReference planRef = FirebaseFirestore.instance.collection('plans').doc(selectedPlanId);
+
+      // Update the Firestore subscription with the new plan reference
+      await FirebaseFirestore.instance.collection('subscriptions').doc(orderId).update({
+        'services': planRef,
+        'updatedAt': Timestamp.now(),
+      });
+
+      // Fetch the plan's name from Firestore (the upgraded plan)
+      DocumentSnapshot planSnapshot = await planRef.get();
+      String? updatedPlanName = planSnapshot.exists ? planSnapshot['name'] : 'No plan name';
+
+      // Update the local state (userOrders) with the new plan name
+      setState(() {
+        for (var order in userOrders) {
+          if (order['id'] == orderId) {
+            order['planName'] = updatedPlanName; // Update the plan name in the local state
+          }
+        }
+      });
+
+      // Create a new notification in the 'notifications' collection
+      User? user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await FirebaseFirestore.instance.collection('notifications').add({
+          'createdAt': Timestamp.now(),
+          'data': 'Plan Upgrade',
+          'isRead': false,
+          'message': 'Your plan has been successfully upgraded to $updatedPlanName.',
+          'title': 'Plan Upgrade Successful',
+          'userId': FirebaseFirestore.instance.collection('users').doc(user.uid),
+        });
+      }
+
+    } catch (error) {
+      showError('Failed to upgrade the plan.');
     }
   }
 
@@ -135,18 +393,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     return resultDate;
   }
 
-  void handleTimeSlotSelection(String slot) {
-    setState(() {
-      if (timeSlots.contains(slot)) {
-        timeSlots.remove(slot);
-      } else if (timeSlots.length < 2) {
-        timeSlots.add(slot);
-      } else {
-        showError('You can only select 2 time slots.');
-      }
-    });
-  }
-
   void calculateDeliveryDate(String pickupDay) {
     final today = DateTime.now();
     int pickupDayIndex = daysOfWeek.indexOf(pickupDay);
@@ -162,94 +408,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     });
   }
 
-  void showError(String message) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Error'),
-        content: Text(message),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('OK')),
-        ],
-      ),
-    );
-  }
-
-  Future<void> submitOrder() async {
-    try {
-      if (pickupLocation == null || dropLocation == null) {
-        showError('Please select both pickup and drop locations.');
-        return;
-      }
-
-      User? user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        showError('No user is logged in. Please log in to place an order.');
-        return;
-      }
-      String userId = user.uid;
-
-      DateTime now = DateTime.now();
-      DocumentReference planRef = FirebaseFirestore.instance.collection('plans').doc(selectedPlan);
-      DocumentReference userRef = FirebaseFirestore.instance.collection('users').doc(userId);
-
-      int dayIndex = daysOfWeek.indexOf(selectedDays.first);
-      DateTime firstSelectedDate = now.add(Duration(days: (dayIndex + 7 - now.weekday) % 7));
-      Timestamp startDateTimestamp = Timestamp.fromDate(firstSelectedDate);
-
-      Map<String, dynamic> orderData = {
-        'createdAt': now,
-        'updatedAt': now,
-        'isActive': true,
-        'startDate': startDateTimestamp,
-        'endDate': deliveryDate != null ? Timestamp.fromDate(deliveryDate!) : null,
-        'pickupLoc': GeoPoint(pickupLocation!.latitude, pickupLocation!.longitude),
-        'dropLoc': GeoPoint(dropLocation!.latitude, dropLocation!.longitude),
-        'serviceType': serviceType,
-        'paymentDetails': {
-          'amount': 100,
-          'transactionId': "dummyTransaction123",
-        },
-        'services': planRef,
-        'userId': userRef,
-      };
-
-      await FirebaseFirestore.instance.collection('subscriptions').add(orderData);
-
-      showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Success'),
-          content: const Text('Your order has been submitted successfully!'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                setState(() {
-                  selectedPlan = null;
-                  serviceType = null;
-                  selectedDays.clear();
-                  timeSlots.clear();
-                  pickupLocation = null;
-                  dropLocation = null;
-                  pickupController.clear();
-                  dropController.clear();
-                  deliveryDate = null;
-                  selectedPickupDate = null;
-                  isPickupConfirmed = false;
-                  isDropConfirmed = false;
-                });
-              },
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-    } catch (error) {
-      showError('Failed to submit order. Please try again.');
-    }
-  }
-
   bool isOrderComplete() {
     return selectedPlan != null &&
         serviceType != null &&
@@ -257,29 +415,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         timeSlots.length == 2 &&
         pickupLocation != null &&
         dropLocation != null;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Schedule Service'),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            buildPlanSelection(),
-            if (selectedPlan != null) buildServiceTypeSelection(),
-            if (serviceType != null) buildDaysSelection(),
-            if (selectedDays.isNotEmpty) buildTimeSlotsSelection(),
-            if (timeSlots.length == 2) buildGoogleMapSection(),
-            if (isOrderComplete()) buildOrderSummary(),
-          ],
-        ),
-      ),
-    );
   }
 
   Widget buildOrderSummary() {
@@ -315,223 +450,182 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           width: double.infinity,
           child: ElevatedButton(
             onPressed: submitOrder,
-            child: const Text('Submit Order'),
+            child: Text(widget.orderId != null ? 'Update Order' : 'Submit Order'),
           ),
         ),
       ],
     );
   }
 
-  Widget buildGoogleMapSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 16),
-        const Text('Pickup Location', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        TextField(
-          controller: pickupController,
-          decoration: const InputDecoration(labelText: 'Enter Pickup Location'),
-          onSubmitted: (value) {
-            if (value.isNotEmpty) {
-              _geocodeAddress(value, isPickupLocation: true);
-            }
-          },
-          readOnly: isPickupConfirmed,
-        ),
-        const SizedBox(height: 16),
-        if (showPickupMap && !isPickupConfirmed)
-          NotificationListener<DraggableScrollableNotification>(
-            onNotification: (notification) => true, // Disable scroll notification to block parent scroll
-            child: SizedBox(
-              height: 300,
-              child: GestureDetector(
-                onVerticalDragUpdate: (details) {}, // Disable parent scroll while interacting with the map
-                child: GoogleMap(
-                  onMapCreated: (controller) => mapController = controller,
-                  initialCameraPosition: CameraPosition(
-                    target: pickupLocation ?? LatLng(17.4239, 78.4738),  // Default location
-                    zoom: 14.0,  // Initial zoom level
-                  ),
-                  markers: markers,
-                  zoomGesturesEnabled: true,  // Enable pinch-to-zoom
-                  scrollGesturesEnabled: true,  // Enable map scrolling gestures
-                  tiltGesturesEnabled: true,  // Enable tilt gestures
-                  rotateGesturesEnabled: true,  // Enable rotate gestures
-                  onCameraMove: (CameraPosition position) {
-                    // Update the camera position when the map moves
-                    setState(() {
-                      pickupLocation = position.target;
-                    });
-                  },
-                  onTap: (position) {
-                    _onMapTap(position, true);  // Handle map tap
-                  },
-                ),
-              ),
-            ),
-          ),
-        if (showPickupMap && !isPickupConfirmed)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () {
-                      setState(() {
-                        isPickupConfirmed = true;
-                        showPickupMap = false;
-                        dropController.text = pickupController.text;
-                        dropLocation = pickupLocation;
-                      });
-                    },
-                    child: const Text('Confirm'),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () {
-                      setState(() {
-                        showPickupMap = false;
-                        pickupController.clear();
-                        pickupLocation = null;
-                        markers.removeWhere((m) => m.markerId.value == 'pickup');
-                      });
-                    },
-                    child: const Text('Reset'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        if (isPickupConfirmed) buildDropLocationSection(),
-        const SizedBox(height: 16),
-      ],
-    );
-  }
-
-  Widget buildDropLocationSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Drop Location', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        TextField(
-          controller: dropController,
-          decoration: const InputDecoration(labelText: 'Enter Drop Location'),
-          onSubmitted: (value) {
-            if (value.isNotEmpty) {
-              _geocodeAddress(value, isPickupLocation: false);
-            }
-          },
-          readOnly: isDropConfirmed,
-        ),
-        const SizedBox(height: 16),
-        if (showDropMap && !isDropConfirmed)
-          SizedBox(
-            height: 300,
-            child: GoogleMap(
-              onMapCreated: (controller) => mapController = controller,
-              initialCameraPosition: CameraPosition(
-                target: dropLocation ?? LatLng(17.4239, 78.4738),
-                zoom: 14.0,
-              ),
-              markers: markers,
-              onTap: (position) {
-                _onMapTap(position, false);
-              },
-            ),
-          ),
-        if (showDropMap && !isDropConfirmed)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () {
-                      setState(() {
-                        isDropConfirmed = true;
-                        showDropMap = false;
-                      });
-                    },
-                    child: const Text('Confirm'),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () {
-                      setState(() {
-                        showDropMap = false;
-                        dropController.clear();
-                        dropLocation = null;
-                        markers.removeWhere((m) => m.markerId.value == 'drop');
-                      });
-                    },
-                    child: const Text('Reset'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-
-  Future<void> _geocodeAddress(String address, {required bool isPickupLocation}) async {
+  Future<void> submitOrder() async {
     try {
-      List<Location> locations = await locationFromAddress(address);
-      LatLng position = LatLng(locations[0].latitude, locations[0].longitude);
-
-      if (isPickupLocation) {
-        pickupLocation = position;
-        markers.removeWhere((m) => m.markerId.value == 'pickup');
-        markers.add(Marker(markerId: MarkerId('pickup'), position: pickupLocation!, infoWindow: InfoWindow(title: 'Pickup Location')));
-
-        mapController?.animateCamera(CameraUpdate.newLatLng(pickupLocation!));
-        setState(() {
-          showPickupMap = true;
-        });
-      } else {
-        dropLocation = position;
-        markers.removeWhere((m) => m.markerId.value == 'drop');
-        markers.add(Marker(markerId: MarkerId('drop'), position: dropLocation!, infoWindow: InfoWindow(title: 'Drop Location')));
-
-        mapController?.animateCamera(CameraUpdate.newLatLng(dropLocation!));
-        setState(() {
-          showDropMap = true;
-        });
+      if (pickupLocation == null || dropLocation == null) {
+        showError('Please select both pickup and drop locations.');
+        return;
       }
-    } catch (e) {
-      showError("Error finding location. Please try again.");
+
+      User? user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        showError('No user is logged in. Please log in to place an order.');
+        return;
+      }
+      String userId = user.uid;
+
+      DateTime now = DateTime.now();
+      DocumentReference planRef = FirebaseFirestore.instance.collection('plans').doc(selectedPlan);
+      DocumentReference userRef = FirebaseFirestore.instance.collection('users').doc(userId);
+
+      Map<String, dynamic> orderData = {
+        'createdAt': now,
+        'updatedAt': now,
+        'isActive': true,
+        'startDate': Timestamp.fromDate(selectedPickupDate!),
+        'endDate': deliveryDate != null ? Timestamp.fromDate(deliveryDate!) : null,
+        'pickupLoc': GeoPoint(pickupLocation!.latitude, pickupLocation!.longitude),
+        'dropLoc': GeoPoint(dropLocation!.latitude, dropLocation!.longitude),
+        'serviceType': serviceType,
+        'paymentDetails': {
+          'amount': 100,
+          'transactionId': "dummyTransaction123",
+        },
+        'services': planRef,
+        'userId': userRef,
+        'timeSlots': timeSlots, // Adding timeSlots
+        'selectedDays': selectedDays, // Adding selectedDays
+      };
+
+      if (widget.orderId != null) {
+        // Update the existing order
+        await FirebaseFirestore.instance.collection('subscriptions').doc(widget.orderId).update(orderData);
+        // Create a notification for the update
+        await FirebaseFirestore.instance.collection('notifications').add({
+          'createdAt': now,
+          'data': 'Subscription Update',
+          'isRead': false,
+          'message': 'Your subscription has been successfully updated.',
+          'title': 'Subscription Updated',
+          'userId': userRef,
+        });
+        showSuccess('Order updated successfully!');
+      } else {
+        // Create a new order
+        await FirebaseFirestore.instance.collection('subscriptions').add(orderData);
+        showSuccess('Order created successfully!');
+      }
+
+      // Clear form on success
+      setState(() {
+        selectedPlan = null;
+        serviceType = null;
+        selectedDays.clear();
+        timeSlots.clear();
+        pickupLocation = null;
+        dropLocation = null;
+        pickupController.clear();
+        dropController.clear();
+        deliveryDate = null;
+        selectedPickupDate = null;
+        isPickupConfirmed = false;
+        isDropConfirmed = false;
+      });
+    } catch (error) {
+      showError('Failed to submit order. Please try again.');
     }
   }
 
-  void _onMapTap(LatLng position, bool isPickupLocation) {
-    setState(() {
-      if (isPickupLocation) {
-        pickupLocation = position;
-        markers.removeWhere((m) => m.markerId.value == 'pickup');
-        markers.add(Marker(markerId: MarkerId('pickup'), position: pickupLocation!, infoWindow: InfoWindow(title: 'Pickup Location')));
-        pickupController.text = '${pickupLocation!.latitude}, ${pickupLocation!.longitude}';
-      } else {
-        dropLocation = position;
-        markers.removeWhere((m) => m.markerId.value == 'drop');
-        markers.add(Marker(markerId: MarkerId('drop'), position: dropLocation!, infoWindow: InfoWindow(title: 'Drop Location')));
-        dropController.text = '${dropLocation!.latitude}, ${dropLocation!.longitude}';
-      }
-    });
+  Widget buildUserOrders() {
+    return ListView.builder(
+      shrinkWrap: true,
+      itemCount: userOrders.length,
+      itemBuilder: (context, index) {
+        final order = userOrders[index];
+        return Card(
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Service Type: ${order['serviceType']}', style: const TextStyle(fontSize: 16)),
+                Text('Pickup Location: LatLng(${order['pickupLoc'].latitude}, ${order['pickupLoc'].longitude})'),
+                Text('Drop Location: LatLng(${order['dropLoc'].latitude}, ${order['dropLoc'].longitude})'),
+                Text('Start Date: ${DateFormat('MMMM dd, yyyy').format(order['startDate'])}'),
+                Text('End Date: ${DateFormat('MMMM dd, yyyy').format(order['endDate'])}'),
+                Text('Amount Paid: ₹${order['paymentDetails']['amount']}'),
+
+                if (order['planName'] != null)
+                  Text('Current Plan: ${order['planName']}', style: const TextStyle(fontSize: 16)),
+
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          // Populate the form with existing order data for editing
+                          setState(() {
+                            selectedPlan = order['planName']; // Use the current plan name
+                            serviceType = order['serviceType'];
+                            pickupLocation = LatLng(order['pickupLoc'].latitude, order['pickupLoc'].longitude);
+                            dropLocation = LatLng(order['dropLoc'].latitude, order['dropLoc'].longitude);
+                            pickupController.text = 'LatLng(${order['pickupLoc'].latitude}, ${order['pickupLoc'].longitude})';
+                            dropController.text = 'LatLng(${order['dropLoc'].latitude}, ${order['dropLoc'].longitude})';
+                            selectedPickupDate = order['startDate'];
+                            deliveryDate = order['endDate'];
+                            timeSlots = order['timeSlots'].cast<String>();
+                            selectedDays = order['selectedDays'].cast<String>();
+                          });
+
+                          // Reuse submitOrder for updating the order
+                          submitOrder();
+                        },
+                        child: const Text('Update'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => cancelOrder(order['id']),
+                        child: const Text('Cancel'),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => showPlanUpgradeDialog(order['id']),
+                    child: const Text('Upgrade your plan'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
-  Widget buildPlanSelection() {
+  Widget buildOrderPlacement() {
     if (plans.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        buildPlanSelection(),
+        if (selectedPlan != null) buildServiceTypeSelection(),
+        if (serviceType != null) buildDaysSelection(),
+        if (selectedDays.isNotEmpty) buildTimeSlotsSelection(),
+        if (timeSlots.length == 2) buildGoogleMapSection(),
+        if (isOrderComplete()) buildOrderSummary(),
+      ],
+    );
+  }
+
+  Widget buildPlanSelection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -745,6 +839,263 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           }).toList(),
         ),
       ],
+    );
+  }
+
+  Widget buildGoogleMapSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 16),
+        const Text('Pickup Location', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        TextField(
+          controller: pickupController,
+          decoration: const InputDecoration(labelText: 'Enter Pickup Location'),
+          onSubmitted: (value) {
+            if (value.isNotEmpty) {
+              _geocodeAddress(value, isPickupLocation: true);
+            }
+          },
+          readOnly: isPickupConfirmed,
+        ),
+        const SizedBox(height: 16),
+        if (showPickupMap && !isPickupConfirmed)
+          NotificationListener<DraggableScrollableNotification>(
+            onNotification: (notification) => true, // Disable scroll notification to block parent scroll
+            child: SizedBox(
+              height: 300,
+              child: GestureDetector(
+                onVerticalDragUpdate: (details) {}, // Disable parent scroll while interacting with the map
+                child: GoogleMap(
+                  onMapCreated: (controller) => mapController = controller,
+                  initialCameraPosition: CameraPosition(
+                    target: pickupLocation ?? LatLng(17.4239, 78.4738),  // Default location
+                    zoom: 14.0,  // Initial zoom level
+                  ),
+                  markers: markers,
+                  zoomGesturesEnabled: true,  // Enable pinch-to-zoom
+                  scrollGesturesEnabled: true,  // Enable map scrolling gestures
+                  tiltGesturesEnabled: true,  // Enable tilt gestures
+                  rotateGesturesEnabled: true,  // Enable rotate gestures
+                  onCameraMove: (CameraPosition position) {
+                    // Update the camera position when the map moves
+                    setState(() {
+                      pickupLocation = position.target;
+                    });
+                  },
+                  onTap: (position) {
+                    _onMapTap(position, true);  // Handle map tap
+                  },
+                ),
+              ),
+            ),
+          ),
+        if (showPickupMap && !isPickupConfirmed)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      setState(() {
+                        isPickupConfirmed = true;
+                        showPickupMap = false;
+                        dropController.text = pickupController.text;
+                        dropLocation = pickupLocation;
+                      });
+                    },
+                    child: const Text('Confirm'),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      setState(() {
+                        showPickupMap = false;
+                        pickupController.clear();
+                        pickupLocation = null;
+                        markers.removeWhere((m) => m.markerId.value == 'pickup');
+                      });
+                    },
+                    child: const Text('Reset'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (isPickupConfirmed) buildDropLocationSection(),
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+
+  Widget buildDropLocationSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Drop Location', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        TextField(
+          controller: dropController,
+          decoration: const InputDecoration(labelText: 'Enter Drop Location'),
+          onSubmitted: (value) {
+            if (value.isNotEmpty) {
+              _geocodeAddress(value, isPickupLocation: false);
+            }
+          },
+          readOnly: isDropConfirmed,
+        ),
+        const SizedBox(height: 16),
+        if (showDropMap && !isDropConfirmed)
+          SizedBox(
+            height: 300,
+            child: GoogleMap(
+              onMapCreated: (controller) => mapController = controller,
+              initialCameraPosition: CameraPosition(
+                target: dropLocation ?? LatLng(17.4239, 78.4738),
+                zoom: 14.0,
+              ),
+              markers: markers,
+              onTap: (position) {
+                _onMapTap(position, false);
+              },
+            ),
+          ),
+        if (showDropMap && !isDropConfirmed)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      setState(() {
+                        isDropConfirmed = true;
+                        showDropMap = false;
+                      });
+                    },
+                    child: const Text('Confirm'),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      setState(() {
+                        showDropMap = false;
+                        dropController.clear();
+                        dropLocation = null;
+                        markers.removeWhere((m) => m.markerId.value == 'drop');
+                      });
+                    },
+                    child: const Text('Reset'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _geocodeAddress(String address, {required bool isPickupLocation}) async {
+    try {
+      List<Location> locations = await locationFromAddress(address);
+      LatLng position = LatLng(locations[0].latitude, locations[0].longitude);
+
+      if (isPickupLocation) {
+        pickupLocation = position;
+        markers.removeWhere((m) => m.markerId.value == 'pickup');
+        markers.add(Marker(markerId: MarkerId('pickup'), position: pickupLocation!, infoWindow: InfoWindow(title: 'Pickup Location')));
+
+        mapController?.animateCamera(CameraUpdate.newLatLng(pickupLocation!));
+        setState(() {
+          showPickupMap = true;
+        });
+      } else {
+        dropLocation = position;
+        markers.removeWhere((m) => m.markerId.value == 'drop');
+        markers.add(Marker(markerId: MarkerId('drop'), position: dropLocation!, infoWindow: InfoWindow(title: 'Drop Location')));
+
+        mapController?.animateCamera(CameraUpdate.newLatLng(dropLocation!));
+        setState(() {
+          showDropMap = true;
+        });
+      }
+    } catch (e) {
+      showError("Error finding location. Please try again.");
+    }
+  }
+
+  void _onMapTap(LatLng position, bool isPickupLocation) {
+    setState(() {
+      if (isPickupLocation) {
+        pickupLocation = position;
+        markers.removeWhere((m) => m.markerId.value == 'pickup');
+        markers.add(Marker(markerId: MarkerId('pickup'), position: pickupLocation!, infoWindow: InfoWindow(title: 'Pickup Location')));
+        pickupController.text = '${pickupLocation!.latitude}, ${pickupLocation!.longitude}';
+      } else {
+        dropLocation = position;
+        markers.removeWhere((m) => m.markerId.value == 'drop');
+        markers.add(Marker(markerId: MarkerId('drop'), position: dropLocation!, infoWindow: InfoWindow(title: 'Drop Location')));
+        dropController.text = '${dropLocation!.latitude}, ${dropLocation!.longitude}';
+      }
+    });
+  }
+
+  void handleTimeSlotSelection(String slot) {
+    setState(() {
+      if (timeSlots.contains(slot)) {
+        timeSlots.remove(slot);
+      } else if (timeSlots.length < 2) {
+        timeSlots.add(slot);
+      } else {
+        showError('You can only select 2 time slots.');
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Schedule Service'),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: userOrders.isNotEmpty ? buildUserOrders() : buildOrderPlacement(),
+      ),
+    );
+  }
+
+  void showError(String message) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Error'),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('OK')),
+        ],
+      ),
+    );
+  }
+
+  void showSuccess(String message) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Success'),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('OK')),
+        ],
+      ),
     );
   }
 }
