@@ -171,31 +171,78 @@ class _HomeScreenState extends State<HomeScreen> {
         itemCount: promotions.length,
         itemBuilder: (context, index) {
           Promotion promo = promotions[index];
-          return Container(
-            width: 250,
-            margin: EdgeInsets.only(right: 16),
-            padding: EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.blue[100],
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  promo.title,
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.blue[800]),
-                ),
-                SizedBox(height: 8),
-                Text(
-                  promo.description,
-                  style: TextStyle(fontSize: 14, color: Colors.blue[600]),
-                ),
-              ],
+          return GestureDetector(
+            onTap: () {
+              _showPromotionDialog(promo);
+            },
+            child: Container(
+              width: 250,
+              margin: EdgeInsets.only(right: 16),
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.blue[100],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    promo.title,
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue[800]),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    promo.description,
+                    style: TextStyle(fontSize: 14, color: Colors.blue[600]),
+                  ),
+                ],
+              ),
             ),
           );
         },
       ),
+    );
+  }
+
+  void _showPromotionDialog(Promotion promo) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(promo.title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(promo.description),
+              SizedBox(height: 16),
+              Text("This is some demo information for this promotion."),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+              },
+              child: Text("Close"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => ScheduleScreen()), // Redirect to ScheduleScreen
+                );
+              },
+              child: Text("Order Now"),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -328,6 +375,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Container(
+      width: double.infinity, // Make it fit the screen width
       padding: EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -342,14 +390,12 @@ class _HomeScreenState extends State<HomeScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           SizedBox(height: 8),
-          Wrap(
-            spacing: 8.0, // space between items
-            runSpacing: 8.0, // space between lines
+          Column(
             children: availablePlans.map((plan) {
               return Container(
-                width: MediaQuery.of(context).size.width * 0.4, // Adjust to fit items in a row
-                height: 120, // Set fixed height to equalize containers
+                margin: EdgeInsets.only(bottom: 8), // Add margin between items
                 padding: EdgeInsets.all(12),
+                width: double.infinity, // Make the container fit the screen width
                 decoration: BoxDecoration(
                   color: Colors.blue[50],
                   borderRadius: BorderRadius.circular(8),
@@ -366,7 +412,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Text(
                       plan.description,
                       style: TextStyle(fontSize: 14),
-                      maxLines: 2, // To ensure text fits within the height limit
+                      maxLines: 2, // Ensure text fits within the height limit
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
