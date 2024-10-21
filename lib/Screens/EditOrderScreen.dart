@@ -62,11 +62,15 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   void generateWeekDays() {
     DateTime today = DateTime.now();
+    DateTime startOfWeek = today.subtract(Duration(days: today.weekday - DateTime.monday));
+
     daysOfWeek.clear();
+
     for (int i = 0; i < 6; i++) {
-      DateTime day = today.add(Duration(days: (i)));
+      DateTime day = startOfWeek.add(Duration(days: i));
       daysOfWeek.add(day);
     }
+
     setState(() {});
   }
 
@@ -562,7 +566,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       await FirebaseFirestore.instance.collection('subscriptions').doc(subscriptionId).update(updatedData);
 
       // Show success dialog
-      showSuccess('Subscription updated successfully!');
+      showSuccess('Order updated successfully!');
 
     } catch (error) {
       // Only show error if something goes wrong
