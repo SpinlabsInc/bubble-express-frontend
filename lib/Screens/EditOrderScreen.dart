@@ -4,6 +4,8 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:geocoding/geocoding.dart';
 
+import 'ScheduleScreen.dart';
+
 class EditOrderScreen extends StatefulWidget {
   final String? subscriptionId;
 
@@ -16,8 +18,8 @@ class EditOrderScreen extends StatefulWidget {
 class _EditOrderScreenState extends State<EditOrderScreen> {
   String? selectedPlan;
   String? serviceType;
-  DateTime? existingStartDate; // Store the start date from the order
-  String? currentServiceTypeInOrder; // Store the service type from the order
+  DateTime? existingStartDate;
+  String? currentServiceTypeInOrder;
   List<String> selectedDays = [];
   String? mainSelectedDay;
   List<String> timeSlots = [];
@@ -37,7 +39,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool showDropMap = false;
 
   final List<String> serviceTypes = ['Pickup every 2 days', 'Pickup every 3 days'];
-  final List<String> daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+  List<DateTime> daysOfWeek = [];
+
   final List<String> timeFrames = [
     '6:00 AM - 9:00 AM', '9:00 AM - 12:00 PM', '12:00 PM - 3:00 PM',
     '3:00 PM - 6:00 PM', '6:00 PM - 9:00 PM'
@@ -53,6 +57,17 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     if (widget.subscriptionId != null) {
       fetchSubscriptionDetails(widget.subscriptionId);
     }
+    generateWeekDays();
+  }
+
+  void generateWeekDays() {
+    DateTime today = DateTime.now();
+    daysOfWeek.clear();
+    for (int i = 0; i < 6; i++) {
+      DateTime day = today.add(Duration(days: (i)));
+      daysOfWeek.add(day);
+    }
+    setState(() {});
   }
 
   Future<void> fetchSubscriptionDetails(String? subscriptionId) async {
@@ -69,20 +84,18 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       setState(() {
         selectedPlan = planDoc.id;
         serviceType = subscriptionDoc['serviceType'];
-        currentServiceTypeInOrder = subscriptionDoc['serviceType']; // Set the original service type
+        currentServiceTypeInOrder = subscriptionDoc['serviceType'];
         selectedPickupDate = subscriptionDoc['startDate'].toDate();
-        existingStartDate = subscriptionDoc['startDate'].toDate(); // Set the existing start date
+        existingStartDate = subscriptionDoc['startDate'].toDate();
         deliveryDate = subscriptionDoc['endDate']?.toDate();
         pickupLocation = LatLng(subscriptionDoc['pickupLoc'].latitude, subscriptionDoc['pickupLoc'].longitude);
         dropLocation = LatLng(subscriptionDoc['dropLoc'].latitude, subscriptionDoc['dropLoc'].longitude);
         pickupController.text = '${pickupLocation!.latitude}, ${pickupLocation!.longitude}';
         dropController.text = '${dropLocation!.latitude}, ${dropLocation!.longitude}';
 
-        // Fetch the selected days and time slots from the subscription and set them
         selectedDays = List<String>.from(subscriptionDoc['selectedDays'] ?? []);
         timeSlots = List<String>.from(subscriptionDoc['timeSlots'] ?? []);
 
-        // Set flags
         isPickupConfirmed = true;
         isDropConfirmed = true;
       });
@@ -113,41 +126,31 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     }
   }
 
-  void handleDaySelection(String day) {
-    final today = DateTime.now().weekday;
-    final int currentDayIndex = daysOfWeek.indexOf(day);
-
-    if (currentDayIndex == today - 1) {
-      showError('We do not service on the current day. Please choose another day.');
-      return;
-    }
-
+  void handleDaySelection(DateTime day) {
     setState(() {
-      mainSelectedDay = day;
-      selectedDays.clear();
+      selectedDays.clear(); // Clear previously selected days
 
       if (serviceType == 'Pickup every 2 days') {
-        DateTime firstSelectedDay = DateTime.now().add(Duration(days: (currentDayIndex + 7 - today) % 7));
-        selectedPickupDate = firstSelectedDay;
+        selectedPickupDate = day;
 
-        DateTime nextDay = firstSelectedDay;
-        while (selectedDays.length < 5) {
-          selectedDays.add(daysOfWeek[nextDay.weekday % 7]);
+        DateTime nextDay = day;
+        while (selectedDays.length < 3) {
+          selectedDays.add(DateFormat('EEEE').format(nextDay));
           nextDay = addDaysSkippingSunday(nextDay, 2);
         }
       } else if (serviceType == 'Pickup every 3 days') {
-        selectedDays.add(day);
-        DateTime firstSelectedDay = DateTime.now().add(Duration(days: (currentDayIndex + 7 - today) % 7));
-        selectedPickupDate = firstSelectedDay;
+        selectedPickupDate = day;
 
-        DateTime nextDay1 = addDaysSkippingSunday(firstSelectedDay, 3);
-        selectedDays.add(daysOfWeek[nextDay1.weekday % 7]);
-
+        DateTime nextDay1 = addDaysSkippingSunday(day, 3);
         DateTime nextDay2 = addDaysSkippingSunday(nextDay1, 3);
-        selectedDays.add(daysOfWeek[nextDay2.weekday % 7]);
+
+        selectedDays.add(DateFormat('EEEE').format(day));
+        selectedDays.add(DateFormat('EEEE').format(nextDay1));
+        selectedDays.add(DateFormat('EEEE').format(nextDay2));
       }
 
-      calculateDeliveryDate(selectedDays.first);
+      // Calculate the delivery date based on the plan (skip Sundays)
+      calculateDeliveryDate(day);
     });
   }
 
@@ -165,18 +168,23 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return resultDate;
   }
 
-  void calculateDeliveryDate(String pickupDay) {
-    final today = DateTime.now();
-    int pickupDayIndex = daysOfWeek.indexOf(pickupDay);
-    int daysUntilPickup = (pickupDayIndex + 7 - today.weekday) % 7;
-    DateTime pickupDate = today.add(Duration(days: daysUntilPickup));
-
+  void calculateDeliveryDate(DateTime pickupDate) {
     setState(() {
       if (serviceType == 'Pickup every 2 days') {
         deliveryDate = addDaysSkippingSunday(pickupDate, 2);
       } else if (serviceType == 'Pickup every 3 days') {
         deliveryDate = addDaysSkippingSunday(pickupDate, 3);
       }
+    });
+  }
+
+  void handleServiceTypeChange(String newServiceType) {
+    setState(() {
+      serviceType = newServiceType;
+      selectedDays.clear(); // Clear all selected days when the service type is switched
+      selectedPickupDate = null; // Clear selected pickup date
+      deliveryDate = null; // Clear the delivery date
+      generateWeekDays(); // Regenerate the days to ensure fresh containers are visible
     });
   }
 
@@ -197,34 +205,28 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           spacing: 8,
           runSpacing: 8,
           children: daysOfWeek.map((day) {
-            final isSelected = selectedDays.contains(day);
-            final int dayIndex = daysOfWeek.indexOf(day);
-
-            // Hide Sunday from the UI without removing it from the list
-            if (day == 'Sunday') return const SizedBox.shrink();
-
-            // Calculate the date while skipping Sundays
-            DateTime nextDay = DateTime.now();
-            int daysToAdd = (dayIndex + 7 - DateTime.now().weekday) % 7;
-
-            // Add the days calculated but skip Sundays
-            nextDay = DateTime.now().add(Duration(days: daysToAdd));
-            while (nextDay.weekday == DateTime.sunday) {
-              nextDay = nextDay.add(const Duration(days: 1));
-            }
+            final isSelected = selectedDays.contains(DateFormat('EEEE').format(day));
+            final isExistingStartDate =
+                existingStartDate != null && isSameDay(day, existingStartDate!) && serviceType == currentServiceTypeInOrder;
 
             return GestureDetector(
-              onTap: () => handleDaySelection(day),
+              onTap: isExistingStartDate
+                  ? () {
+                showWarningDialog('You cannot select the existing day in this plan.');
+              }
+                  : () => handleDaySelection(day),
               child: SizedBox(
                 width: (MediaQuery.of(context).size.width - 48) / 3,
                 height: 80,
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
                   decoration: BoxDecoration(
-                    color: isSelected ? Colors.blue : Colors.grey[200],
+                    color: isExistingStartDate
+                        ? Colors.orange // Highlight existing start date in orange for current plan
+                        : (isSelected ? Colors.blue : Colors.grey[200]),
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: isSelected ? Colors.blue : Colors.grey,
+                      color: isExistingStartDate ? Colors.orange : (isSelected ? Colors.blue : Colors.grey),
                       width: 2,
                     ),
                   ),
@@ -233,9 +235,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          day,
+                          DateFormat('EEEE').format(day),
                           style: TextStyle(
-                            color: isSelected ? Colors.white : Colors.black,
+                            color: isExistingStartDate ? Colors.white : (isSelected ? Colors.white : Colors.black),
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
                           ),
@@ -243,10 +245,9 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          // Display the correctly calculated date
-                          DateFormat('dd MMM').format(nextDay),
+                          DateFormat('dd MMM').format(day),
                           style: TextStyle(
-                            color: isSelected ? Colors.white : Colors.black,
+                            color: isExistingStartDate ? Colors.white : (isSelected ? Colors.white : Colors.black),
                             fontSize: 12,
                             fontWeight: FontWeight.w400,
                           ),
@@ -280,7 +281,29 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
+  bool isSameDay(DateTime day1, DateTime day2) {
+    return day1.year == day2.year && day1.month == day2.month && day1.day == day2.day;
+  }
 
+  void showWarningDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Warning'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   Widget buildGoogleMapSection() {
     return Column(
@@ -522,6 +545,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       DateTime now = DateTime.now();
       DocumentReference planRef = FirebaseFirestore.instance.collection('plans').doc(selectedPlan);
 
+      // Prepare the data
       Map<String, dynamic> updatedData = {
         'updatedAt': now,
         'startDate': Timestamp.fromDate(selectedPickupDate!),
@@ -530,16 +554,22 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         'dropLoc': GeoPoint(dropLocation!.latitude, dropLocation!.longitude),
         'serviceType': serviceType,
         'services': planRef,
+        'selectedDays': selectedDays,
+        'timeSlots': timeSlots,
       };
 
+      // Update the subscription in Firebase
       await FirebaseFirestore.instance.collection('subscriptions').doc(subscriptionId).update(updatedData);
+
+      // Show success dialog
       showSuccess('Subscription updated successfully!');
-      // Navigate to ScheduleScreen and prevent going back
-      Navigator.of(context).pushNamedAndRemoveUntil('/scheduleScreen', (route) => false);
+
     } catch (error) {
+      // Only show error if something goes wrong
       showError('Failed to update subscription. Please try again.');
     }
   }
+
 
   void showError(String message) {
     showDialog(
@@ -562,13 +592,20 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         content: Text(message),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pushNamedAndRemoveUntil('/scheduleScreen', (route) => false),
+            onPressed: () {
+              // Navigate to the ScheduleScreen and prevent back navigation
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (context) => ScheduleScreen()),
+                    (route) => false,
+              );
+            },
             child: const Text('OK'),
           ),
         ],
       ),
     );
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -716,23 +753,26 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
             final isSelected = timeSlots.contains(slot);
             return GestureDetector(
               onTap: () => handleTimeSlotSelection(slot),
-              child: Container(
-                width: (MediaQuery.of(context).size.width - 48) / 2, // Adjust the width to fit 2 slots side by side
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-                decoration: BoxDecoration(
-                  color: isSelected ? Colors.blue : Colors.grey[200],
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: isSelected ? Colors.blue : Colors.grey),
-                ),
-                child: Center(
-                  child: Text(
-                    slot,
-                    style: TextStyle(
-                      color: isSelected ? Colors.white : Colors.black,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
+              child: SizedBox(
+                width: (MediaQuery.of(context).size.width - 48) / 3,  // Ensure 3 items per row
+                height: 80,  // Match the day container height
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: isSelected ? Colors.blue : Colors.grey[200],
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: isSelected ? Colors.blue : Colors.grey, width: 2),
+                  ),
+                  child: Center(
+                    child: Text(
+                      slot,
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : Colors.black,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
-                    textAlign: TextAlign.center,
                   ),
                 ),
               ),
@@ -754,6 +794,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       }
     });
   }
+
 
   void _onMapTap(LatLng position, bool isPickupLocation) {
     setState(() {

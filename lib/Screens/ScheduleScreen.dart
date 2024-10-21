@@ -784,6 +784,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
+
+
   void showError(String message) {
     showDialog(
       context: context,
@@ -829,18 +831,30 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                 Text('Start Date: ${DateFormat('MMMM dd, yyyy').format(order['startDate'])}'),
                 Text('End Date: ${DateFormat('MMMM dd, yyyy').format(order['endDate'])}'),
                 Text('Amount Paid: ₹${order['paymentDetails']['amount']}'),
+
+                // Display the selected days
+                if (order['selectedDays'] != null && order['selectedDays'].isNotEmpty)
+                  Text('Selected Days: ${order['selectedDays'].join(', ')}', style: const TextStyle(fontSize: 16)),
+
+                // Display the selected time slots
+                if (order['timeSlots'] != null && order['timeSlots'].isNotEmpty)
+                  Text('Time Slots: ${order['timeSlots'].join(', ')}', style: const TextStyle(fontSize: 16)),
+
                 if (order['planName'] != null)
                   Text('Current Plan: ${order['planName']}', style: const TextStyle(fontSize: 16)),
+
                 const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // Upgrade button
-                    ElevatedButton(
-                      onPressed: () => showPlanUpgradeDialog(order['id']),
-                      child: const Text('Upgrade Plan'),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton(
+                        onPressed: () => showPlanUpgradeDialog(order['id']),
+                        child: const Text('Upgrade Plan'),
+                      ),
                     ),
-                    // Edit Icon button - navigates to EditOrderScreen with the order ID
+                    const SizedBox(width: 8),
                     IconButton(
                       icon: Icon(Icons.edit),
                       onPressed: () {
@@ -862,6 +876,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       },
     );
   }
+
 
   Future<void> showPlanUpgradeDialog(String orderId) async {
     final currentOrder = userOrders.firstWhere((order) => order['id'] == orderId);
