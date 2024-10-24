@@ -1,9 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:geocoding/geocoding.dart';
 
+import '../main.dart';
 import 'ScheduleScreen.dart';
 
 class EditOrderScreen extends StatefulWidget {
@@ -18,6 +20,14 @@ class EditOrderScreen extends StatefulWidget {
 class _EditOrderScreenState extends State<EditOrderScreen> {
   String? selectedPlan;
   String? serviceType;
+  LatLng? homePickupLoc;
+  LatLng? homeDropLoc;
+  LatLng? workPickupLoc;
+  LatLng? workDropLoc;
+  LatLng? tempHomePickupLoc;
+  LatLng? tempHomeDropLoc;
+  LatLng? tempWorkPickupLoc;
+  LatLng? tempWorkDropLoc;
   DateTime? existingStartDate;
   String? currentServiceTypeInOrder;
   List<String> selectedDays = [];
@@ -30,6 +40,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   TextEditingController dropController = TextEditingController();
 
   DateTime? deliveryDate;
+  DateTime? endDate;
   DateTime? selectedPickupDate;
   List<Map<String, dynamic>> plans = [];
 
@@ -37,6 +48,8 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   bool isDropConfirmed = false;
   bool showPickupMap = false;
   bool showDropMap = false;
+  bool isHomeLocationUpdated = false;
+  bool isWorkLocationUpdated = false;
 
   final List<String> serviceTypes = ['Pickup every 2 days', 'Pickup every 3 days'];
 
@@ -62,17 +75,29 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   void generateWeekDays() {
     DateTime today = DateTime.now();
-    DateTime startOfWeek = today.subtract(Duration(days: today.weekday - DateTime.monday));
+    int currentWeekday = today.weekday;
 
     daysOfWeek.clear();
 
-    for (int i = 0; i < 6; i++) {
-      DateTime day = startOfWeek.add(Duration(days: i));
-      daysOfWeek.add(day);
+    // Loop through Monday to Saturday
+    for (int i = 1; i <= 6; i++) {
+      DateTime day;
+
+      if (i < currentWeekday) {
+        // For past days (Monday to today), shift them to the next week
+        day = today.add(Duration(days: (i - currentWeekday + 7)));
+      } else {
+        // For today and future days, display this week's dates
+        day = today.add(Duration(days: (i - currentWeekday)));
+      }
+
+      daysOfWeek.add(day); // Add calculated day to list
     }
 
     setState(() {});
   }
+
+
 
   Future<void> fetchSubscriptionDetails(String? subscriptionId) async {
     if (subscriptionId == null) return;
@@ -85,28 +110,82 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
       DocumentSnapshot planDoc = await subscriptionDoc['services'].get();
 
+      // Fetch the locations from the `location` field
+      Map<String, dynamic> locationData = subscriptionDoc['location'] ?? {};
+
       setState(() {
         selectedPlan = planDoc.id;
         serviceType = subscriptionDoc['serviceType'];
         currentServiceTypeInOrder = subscriptionDoc['serviceType'];
         selectedPickupDate = subscriptionDoc['startDate'].toDate();
         existingStartDate = subscriptionDoc['startDate'].toDate();
-        deliveryDate = subscriptionDoc['endDate']?.toDate();
-        pickupLocation = LatLng(subscriptionDoc['pickupLoc'].latitude, subscriptionDoc['pickupLoc'].longitude);
-        dropLocation = LatLng(subscriptionDoc['dropLoc'].latitude, subscriptionDoc['dropLoc'].longitude);
-        pickupController.text = '${pickupLocation!.latitude}, ${pickupLocation!.longitude}';
-        dropController.text = '${dropLocation!.latitude}, ${dropLocation!.longitude}';
+        deliveryDate = subscriptionDoc['deliveryDate']?.toDate();
+        endDate = subscriptionDoc['endDate']?.toDate();
 
+        // Fetch pickup and drop locations from location data
+        pickupLocation = locationData['pickup'] != null
+            ? LatLng(locationData['pickup'].latitude, locationData['pickup'].longitude)
+            : null;
+        dropLocation = locationData['drop'] != null
+            ? LatLng(locationData['drop'].latitude, locationData['drop'].longitude)
+            : null;
+
+        // Set the text controllers
+        pickupController.text = pickupLocation != null
+            ? '${pickupLocation!.latitude}, ${pickupLocation!.longitude}'
+            : '';
+        dropController.text = dropLocation != null
+            ? '${dropLocation!.latitude}, ${dropLocation!.longitude}'
+            : '';
+
+        // Fetch home and work locations
+        LatLng? homePickupLoc = locationData['home']?['pickup'] != null
+            ? LatLng(locationData['home']['pickup'].latitude, locationData['home']['pickup'].longitude)
+            : null;
+        LatLng? homeDropLoc = locationData['home']?['drop'] != null
+            ? LatLng(locationData['home']['drop'].latitude, locationData['home']['drop'].longitude)
+            : null;
+
+        LatLng? workPickupLoc = locationData['work']?['pickup'] != null
+            ? LatLng(locationData['work']['pickup'].latitude, locationData['work']['pickup'].longitude)
+            : null;
+        LatLng? workDropLoc = locationData['work']?['drop'] != null
+            ? LatLng(locationData['work']['drop'].latitude, locationData['work']['drop'].longitude)
+            : null;
+
+        // Update selected days and time slots
         selectedDays = List<String>.from(subscriptionDoc['selectedDays'] ?? []);
         timeSlots = List<String>.from(subscriptionDoc['timeSlots'] ?? []);
 
-        isPickupConfirmed = true;
-        isDropConfirmed = true;
+        isPickupConfirmed = pickupLocation != null;
+        isDropConfirmed = dropLocation != null;
+
+        // If the pickup location is fetched, update the camera to the location and show the map
+        if (pickupLocation != null) {
+          showPickupMap = true;
+          mapController?.animateCamera(
+            CameraUpdate.newCameraPosition(
+              CameraPosition(
+                target: pickupLocation!,
+                zoom: 14.0,
+              ),
+            ),
+          );
+
+          markers.add(
+            Marker(
+              markerId: const MarkerId('pickup'),
+              position: pickupLocation!,
+              infoWindow: const InfoWindow(title: 'Pickup Location'),
+            ),
+          );
+        }
       });
     } catch (error) {
       showError("Error fetching subscription details.");
     }
   }
+
 
   Future<void> fetchPlansFromFirebase() async {
     try {
@@ -239,6 +318,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
+                          // Use fixed labels: Monday to Saturday
                           DateFormat('EEEE').format(day),
                           style: TextStyle(
                             color: isExistingStartDate ? Colors.white : (isSelected ? Colors.white : Colors.black),
@@ -249,6 +329,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
+                          // Display the actual date
                           DateFormat('dd MMM').format(day),
                           style: TextStyle(
                             color: isExistingStartDate ? Colors.white : (isSelected ? Colors.white : Colors.black),
@@ -313,7 +394,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 16),
         const Text('Pickup Location', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
         TextField(
@@ -330,36 +410,38 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         if (showPickupMap)
           Column(
             children: [
-              // Display the map
+              // Display the map for pickup location
               SizedBox(
                 height: 300,
                 child: GoogleMap(
                   onMapCreated: (controller) => mapController = controller,
                   initialCameraPosition: CameraPosition(
-                    target: pickupLocation ?? LatLng(17.4239, 78.4738),
+                    target: pickupLocation ?? LatLng(17.4239, 78.4738),  // Default location
                     zoom: 14.0,
                   ),
                   markers: markers,
                   onTap: (position) {
-                    _onMapTap(position, true);
+                    _onMapTap(position, true);  // Handle map tap for pickup location
                   },
                 ),
               ),
-
-              // Add Confirm and Cancel buttons below the map
+              // Confirm and Cancel buttons below the map
               Padding(
                 padding: const EdgeInsets.only(top: 16.0),
                 child: Row(
                   children: [
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () {
+                        onPressed: () async {
                           setState(() {
                             isPickupConfirmed = true;
                             showPickupMap = false;
-                            dropController.text = pickupController.text;
+                            dropController.text = pickupController.text;  // Automatically assign pickup location to drop location
                             dropLocation = pickupLocation;
                           });
+
+                          // Ask if the user wants to save the pickup location as home or work
+                          await _showSaveLocationDialog(isPickupLocation: true);
                         },
                         child: const Text('Confirm'),
                       ),
@@ -383,9 +465,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               ),
             ],
           ),
-
-        if (isPickupConfirmed) buildDropLocationSection(),
-        const SizedBox(height: 16),
       ],
     );
   }
@@ -421,23 +500,26 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   ),
                   markers: markers,
                   onTap: (position) {
-                    _onMapTap(position, false);
+                    _onMapTap(position, false);  // Handle map tap for drop location
                   },
                 ),
               ),
 
-              // Add Confirm and Cancel buttons below the map
+              // Confirm and Cancel buttons below the map
               Padding(
                 padding: const EdgeInsets.only(top: 16.0),
                 child: Row(
                   children: [
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () {
+                        onPressed: () async {
                           setState(() {
                             isDropConfirmed = true;
                             showDropMap = false;
                           });
+
+                          // Ask if the user wants to save the drop location as home or work
+                          await _showSaveLocationDialog(isPickupLocation: false);
                         },
                         child: const Text('Confirm'),
                       ),
@@ -521,7 +603,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
           ),
         if (deliveryDate != null)
           Text(
-            'Estimated Delivery Date: ${DateFormat('MMMM dd, yyyy').format(deliveryDate!)}',
+            'Estimated Delivery Date: ${DateFormat('MMMM dd, yyyy').format(deliveryDate!)}', // Show deliveryDate here
             style: const TextStyle(fontSize: 16),
           ),
         if (pickupLocation != null)
@@ -535,43 +617,152 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
   Future<void> updateSubscription() async {
     try {
+      // Check if pickup and drop locations are valid
       if (pickupLocation == null || dropLocation == null) {
         showError('Please select both pickup and drop locations.');
         return;
       }
 
+      // Ensure that the subscription ID is not null
       String? subscriptionId = widget.subscriptionId;
       if (subscriptionId == null) {
         showError('Subscription ID is missing.');
         return;
       }
 
+      // Ensure selectedPickupDate is not null
+      if (selectedPickupDate == null) {
+        showError('Please select a pickup date.');
+        return;
+      }
+
       DateTime now = DateTime.now();
       DocumentReference planRef = FirebaseFirestore.instance.collection('plans').doc(selectedPlan);
 
-      // Prepare the data
+      // Create the initial data structure with fields that always get updated
       Map<String, dynamic> updatedData = {
         'updatedAt': now,
         'startDate': Timestamp.fromDate(selectedPickupDate!),
-        'endDate': deliveryDate != null ? Timestamp.fromDate(deliveryDate!) : null,
-        'pickupLoc': GeoPoint(pickupLocation!.latitude, pickupLocation!.longitude),
-        'dropLoc': GeoPoint(dropLocation!.latitude, dropLocation!.longitude),
+        'deliveryDate': deliveryDate != null ? Timestamp.fromDate(deliveryDate!) : null,
         'serviceType': serviceType,
         'services': planRef,
         'selectedDays': selectedDays,
         'timeSlots': timeSlots,
       };
 
-      // Update the subscription in Firebase
+      // Fetch the current subscription data from Firestore
+      DocumentSnapshot subscriptionSnapshot = await FirebaseFirestore.instance
+          .collection('subscriptions')
+          .doc(subscriptionId)
+          .get();
+
+      // Extract existing location data if available
+      Map<String, dynamic> existingLocationData =
+          subscriptionSnapshot.get('location') as Map<String, dynamic>? ?? {};
+
+      // Ensure the location data is structured properly
+      Map<String, dynamic> locationData = existingLocationData.isNotEmpty ? Map.from(existingLocationData) : {};
+
+      // Only update pickup if it has changed
+      if (pickupLocation != null && GeoPoint(pickupLocation!.latitude, pickupLocation!.longitude) != existingLocationData['pickup']) {
+        locationData['pickup'] = GeoPoint(pickupLocation!.latitude, pickupLocation!.longitude);
+      }
+
+      // Only update drop if it has changed
+      if (dropLocation != null && GeoPoint(dropLocation!.latitude, dropLocation!.longitude) != existingLocationData['drop']) {
+        locationData['drop'] = GeoPoint(dropLocation!.latitude, dropLocation!.longitude);
+      }
+
+      // Only update the location field if any of the location data was modified
+      if (locationData.isNotEmpty) {
+        updatedData['location'] = locationData;
+      }
+
+      // Update the subscription in Firestore
       await FirebaseFirestore.instance.collection('subscriptions').doc(subscriptionId).update(updatedData);
+
+      // Fetch user info for the notification
+      User? user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        // Prepare the notification data
+        Map<String, dynamic> notificationData = {
+          'createdAt': Timestamp.now(),
+          'data': 'Plan Update',
+          'isRead': false,
+          'message': 'Your plan has been successfully updated.',
+          'title': 'Plan Update Successful',
+          'userId': FirebaseFirestore.instance.collection('users').doc(user.uid),  // Reference to user document
+        };
+
+        // Add the notification to the 'notifications' collection
+        await FirebaseFirestore.instance.collection('notifications').add(notificationData);
+      }
 
       // Show success dialog
       showSuccess('Order updated successfully!');
-
     } catch (error) {
-      // Only show error if something goes wrong
+      print("Error updating subscription: $error");  // Log any errors to the console
       showError('Failed to update subscription. Please try again.');
     }
+  }
+
+
+  Future<void> _showSaveLocationDialog({required bool isPickupLocation}) async {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(isPickupLocation ? 'Save Pickup Location' : 'Save Drop Location'),
+          content: const Text('Would you like to save this location as your Home or Work location?'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();  // Close the dialog without saving
+              },
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                _saveLocationAs('home', isPickupLocation: isPickupLocation);  // Save as Home
+                Navigator.of(context).pop();  // Close the dialog
+              },
+              child: const Text('Save as Home'),
+            ),
+            TextButton(
+              onPressed: () {
+                _saveLocationAs('work', isPickupLocation: isPickupLocation);  // Save as Work
+                Navigator.of(context).pop();  // Close the dialog
+              },
+              child: const Text('Save as Work'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _saveLocationAs(String type, {required bool isPickupLocation}) {
+    setState(() {
+      if (type == 'home') {
+        isHomeLocationUpdated = true;  // Mark home location as updated
+        if (isPickupLocation) {
+          tempHomePickupLoc = pickupLocation;  // Save pickup location for home
+          tempHomeDropLoc = pickupLocation;    // Automatically set drop location same as pickup for home
+          dropController.text = pickupController.text;
+        } else {
+          tempHomeDropLoc = dropLocation;      // Save drop location for home
+        }
+      } else if (type == 'work') {
+        isWorkLocationUpdated = true;  // Mark work location as updated
+        if (isPickupLocation) {
+          tempWorkPickupLoc = pickupLocation;  // Save pickup location for work
+          tempWorkDropLoc = pickupLocation;    // Automatically set drop location same as pickup for work
+          dropController.text = pickupController.text;
+        } else {
+          tempWorkDropLoc = dropLocation;      // Save drop location for work
+        }
+      }
+    });
   }
 
 
@@ -597,9 +788,11 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              // Navigate to the ScheduleScreen and prevent back navigation
+              // Navigate back to MainScreen and set initialIndex to 1 (for ScheduleScreen)
               Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (context) => ScheduleScreen()),
+                MaterialPageRoute(
+                  builder: (context) => MainScreen(initialIndex: 1),  // Set the tab index to ScheduleScreen
+                ),
                     (route) => false,
               );
             },
@@ -609,7 +802,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
       ),
     );
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -653,11 +845,16 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         buildServiceTypeSelection(),
         buildDaysSelection(),
         buildTimeSlotsSelection(),
-        buildGoogleMapSection(),
+
+        // Include both Google Map for Pickup and Drop Location Sections
+        buildGoogleMapSection(),  // For Pickup Location
+        buildDropLocationSection(),  // For Drop Location
+
         buildOrderSummary(),
       ],
     );
   }
+
 
   Widget buildPlanSelection() {
     return Column(

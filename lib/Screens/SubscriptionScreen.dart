@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart'; // Import for date formatting and difference calculation
+
+import 'PlansPageScreen.dart';
 
 class SubscriptionScreen extends StatelessWidget {
   @override
@@ -24,10 +25,7 @@ class SubscriptionScreen extends StatelessWidget {
 
           if (subscriptions.isEmpty) {
             return Center(
-              child: Text(
-                'No Subscriptions found',
-                style: TextStyle(fontSize: 18),
-              ),
+              child: Text('No Subscriptions found'),
             );
           }
 
@@ -52,7 +50,6 @@ class SubscriptionScreen extends StatelessWidget {
     }
 
     final String userId = user.uid;
-
     DocumentReference userDocRef = FirebaseFirestore.instance.collection('users').doc(userId);
 
     try {
@@ -80,65 +77,60 @@ class SubscriptionCard extends StatefulWidget {
 }
 
 class _SubscriptionCardState extends State<SubscriptionCard> {
-  late bool isActive;
-  bool hideButtons = false; // Track if buttons should be hidden
-  String serviceName = 'Loading...'; // Variable to hold the service name
+  late SubscriptionRecord subscription;  // Store subscription in state
 
   @override
   void initState() {
     super.initState();
-    isActive = widget.subscription.isActive;
-    _fetchServiceName(); // Fetch the service name on initialization
+    subscription = widget.subscription;  // Initialize with the passed subscription
+    _fetchServiceName();  // Fetch service name initially
   }
 
-  // Fetch the service name from the 'plans' collection using the service reference
+  // Fetches the service name from Firebase and updates the UI
   Future<void> _fetchServiceName() async {
-    if (widget.subscription.services != null) {
+    if (subscription.services != null) {
       try {
-        DocumentSnapshot serviceDoc = await widget.subscription.services!.get();
+        DocumentSnapshot serviceDoc = await subscription.services!.get();
+
         if (serviceDoc.exists) {
           setState(() {
-            serviceName = serviceDoc['name'] ?? 'Unknown Service';
+            subscription = subscription.copyWith(
+              serviceName: serviceDoc['name'] ?? 'Unknown Service',
+            );
           });
         } else {
           setState(() {
-            serviceName = 'Service not found';
+            subscription = subscription.copyWith(serviceName: 'Service not found');
           });
         }
       } catch (e) {
         setState(() {
-          serviceName = 'Error fetching service';
+          subscription = subscription.copyWith(serviceName: 'Error fetching service');
         });
       }
     } else {
       setState(() {
-        serviceName = 'No Service Available';
+        subscription = subscription.copyWith(serviceName: 'No Service Available');
       });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final serviceType = widget.subscription.serviceType ?? 'N/A';
-    final amount = widget.subscription.paymentDetails['amount'] ?? 'N/A';
-    final transactionId = widget.subscription.paymentDetails['transactionId'] ?? 'N/A';
-    final startDate = widget.subscription.startDate?.toDate().toLocal().toString().split(' ')[0] ?? 'N/A';
-    final endDate = widget.subscription.endDate?.toDate().toLocal().toString().split(' ')[0] ?? 'N/A';
+    final serviceType = subscription.serviceType ?? 'N/A';
+    final amount = subscription.paymentDetails['amount'] ?? 'N/A';
+    final startDate = subscription.startDate?.toDate().toLocal().toString().split(' ')[0] ?? 'N/A';
+    final endDate = subscription.endDate?.toDate().toLocal().toString().split(' ')[0] ?? 'N/A';
 
-    // Calculate remaining days based on startDate and endDate
-    final DateTime? startDateObject = widget.subscription.startDate?.toDate();
-    final DateTime? endDateObject = widget.subscription.endDate?.toDate();
-
+    final DateTime? endDateObject = subscription.endDate?.toDate();
     int remainingDays = 0;
-    if (startDateObject != null && endDateObject != null) {
-      remainingDays = endDateObject.difference(startDateObject).inDays + 1;  // Include both start and end days
+    if (endDateObject != null) {
+      remainingDays = endDateObject.difference(DateTime.now()).inDays;
     }
 
-    // Ensure that remaining days never show a negative value
     final remainingDaysText = remainingDays >= 0 ? '$remainingDays days' : 'Subscription Ended';
-
-    final statusText = isActive ? 'Active' : 'Inactive';
-    final statusColor = isActive ? Colors.green : Colors.red;
+    final statusText = subscription.isActive ? 'Active' : 'Inactive';
+    final statusColor = subscription.isActive ? Colors.green : Colors.red;
 
     return Card(
       elevation: 8,
@@ -149,98 +141,141 @@ class _SubscriptionCardState extends State<SubscriptionCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Service Name: $serviceName', style: TextStyle(fontSize: 18)),
+            Text('Service Name: ${subscription.serviceName}', style: TextStyle(fontSize: 18)),
             SizedBox(height: 8),
             Text('Service Type: $serviceType', style: TextStyle(fontSize: 18)),
             SizedBox(height: 8),
             Text('Amount: ₹$amount', style: TextStyle(fontSize: 16)),
             SizedBox(height: 8),
-            Text('Transaction ID: $transactionId', style: TextStyle(fontSize: 16)),
-            SizedBox(height: 8),
             Text('Start Date: $startDate', style: TextStyle(fontSize: 16)),
             SizedBox(height: 8),
             Text('End Date: $endDate', style: TextStyle(fontSize: 16)),
             SizedBox(height: 8),
-            Text(
-              'Remaining Days: $remainingDaysText',
-              style: TextStyle(fontSize: 16, color: Colors.blue),
-            ),
+            Text('Remaining Days: $remainingDaysText', style: TextStyle(fontSize: 16, color: Colors.blue)),
             SizedBox(height: 8),
-            Text(
-              'Status: $statusText',
-              style: TextStyle(fontSize: 16, color: statusColor),
-            ),
+            Text('Status: $statusText', style: TextStyle(fontSize: 16, color: statusColor)),
             SizedBox(height: 16),
-            if (!hideButtons) // Buttons are hidden only after cancellation
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: isActive
-                          ? () => _updateSubscriptionStatus(context, widget.subscription.reference, false)
-                          : () => _updateSubscriptionStatus(context, widget.subscription.reference, true),
-                      child: Text(isActive ? 'Pause' : 'Resume'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: isActive ? Colors.orange : Colors.green,
-                        minimumSize: Size(double.infinity, 50),
-                      ),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: subscription.isActive
+                        ? () => _updateSubscriptionStatus(context, subscription.reference, false)
+                        : () => _updateSubscriptionStatus(context, subscription.reference, true),
+                    child: Text(subscription.isActive ? 'Pause' : 'Resume'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: subscription.isActive ? Colors.orange : Colors.green,
+                      minimumSize: Size(double.infinity, 50),
                     ),
                   ),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () => _confirmCancellation(context),
-                      child: Text('Cancel'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        minimumSize: Size(double.infinity, 50),
-                      ),
+                ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => _showUpgradeDialog(context),
+                    child: Text('Upgrade'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      minimumSize: Size(double.infinity, 50),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
     );
   }
 
+  // Updates the subscription status in Firebase and reflects it in the UI
   Future<void> _updateSubscriptionStatus(BuildContext context, DocumentReference subscriptionRef, bool newStatus) async {
     try {
       await subscriptionRef.update({'isActive': newStatus});
+
       setState(() {
-        isActive = newStatus;
+        subscription = subscription.copyWith(isActive: newStatus);
       });
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(newStatus ? 'Subscription Resumed' : 'Subscription Paused')),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error updating subscription')),
+        SnackBar(content: Text('Error updating subscription status')),
       );
     }
   }
 
-  Future<void> _confirmCancellation(BuildContext context) async {
+  // Shows a dialog for upgrading the plan and confirms the upgrade
+  Future<void> _showUpgradeDialog(BuildContext parentContext) async {
+    final availablePlans = await _fetchAvailablePlans();
+    final currentAmount = subscription.paymentDetails['amount'] ?? 0;
+
     showDialog(
-      context: context,
+      context: parentContext,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text('Confirm Cancellation'),
-          content: Text('Are you sure you want to cancel this subscription? This action is irreversible.'),
+          title: Text('Upgrade Plan'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: availablePlans.map((plan) {
+              final isCurrentPlan = plan['id'] == subscription.services!.id;
+              final priceDifference = plan['price'] - currentAmount;
+
+              return ListTile(
+                title: Text(plan['name']),
+                subtitle: Text(priceDifference >= 0
+                    ? '₹$priceDifference extra from current plan'
+                    : '₹${priceDifference.abs()} less from current plan'),
+                trailing: IconButton(
+                  icon: Icon(Icons.info_outline),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => PlanDetailsPage(plan: plan),
+                      ),
+                    );
+                  },
+                ),
+                enabled: !isCurrentPlan,
+                tileColor: isCurrentPlan ? Colors.grey.shade300 : null,
+                onTap: !isCurrentPlan
+                    ? () {
+                  Navigator.of(context).pop(); // Close the upgrade dialog
+                  _confirmPlanUpgrade(parentContext, plan['id'], plan['price']); // Show confirmation dialog
+                }
+                    : null,
+              );
+            }).toList(),
+          ),
+        );
+      },
+    );
+  }
+
+  // Confirms the plan upgrade and shows success or failure messages
+  Future<void> _confirmPlanUpgrade(BuildContext parentContext, String newPlanId, int newPrice) async {
+    showDialog(
+      context: parentContext,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Confirm Upgrade'),
+          content: Text('Are you sure you want to upgrade to the new plan?'),
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.of(context).pop(); // Dismiss dialog
+                Navigator.of(context).pop(); // Dismiss the dialog if the user cancels
               },
-              child: Text('No'),
+              child: Text('Cancel'),
             ),
             ElevatedButton(
               onPressed: () {
-                Navigator.of(context).pop(); // Dismiss dialog
-                _cancelSubscription(context, widget.subscription.reference);
+                Navigator.of(context).pop(); // Close the confirmation dialog
+                _upgradePlan(parentContext, newPlanId, newPrice); // Proceed with upgrading the plan
               },
-              child: Text('Yes, Cancel'),
+              child: Text('Yes, Upgrade'),
             ),
           ],
         );
@@ -248,20 +283,52 @@ class _SubscriptionCardState extends State<SubscriptionCard> {
     );
   }
 
-  Future<void> _cancelSubscription(BuildContext context, DocumentReference subscriptionRef) async {
+  // Upgrades the subscription plan in Firebase and reflects the changes in the UI
+  Future<void> _upgradePlan(BuildContext parentContext, String newPlanId, int newPrice) async {
+    final subscriptionRef = subscription.reference;
+
     try {
-      await subscriptionRef.update({'isActive': false});
-      setState(() {
-        hideButtons = true;  // Hide buttons after cancellation
+      // Update the subscription with the new plan details in Firebase
+      await subscriptionRef.update({
+        'services': FirebaseFirestore.instance.collection('plans').doc(newPlanId),
+        'paymentDetails.amount': newPrice,
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Subscription Canceled')),
+
+      // Refetch the updated subscription
+      DocumentSnapshot updatedSubscriptionDoc = await subscriptionRef.get();
+      SubscriptionRecord updatedSubscription = SubscriptionRecord.fromSnapshot(updatedSubscriptionDoc);
+
+      setState(() {
+        subscription = updatedSubscription;  // Update the state with the new subscription
+      });
+
+      // Refetch the service name for the newly upgraded plan
+      await _fetchServiceName();
+
+      // Show success message immediately after the Firebase update
+      ScaffoldMessenger.of(parentContext).showSnackBar(
+        SnackBar(content: Text('Plan upgraded successfully!')),
       );
+
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error canceling subscription')),
+      // Handle errors by showing a failure message
+      ScaffoldMessenger.of(parentContext).showSnackBar(
+        SnackBar(content: Text('Error upgrading plan. Please try again.')),
       );
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchAvailablePlans() async {
+    final querySnapshot = await FirebaseFirestore.instance.collection('plans').get();
+    return querySnapshot.docs.map((doc) {
+      final data = doc.data() as Map<String, dynamic>;
+      return {
+        'id': doc.id,
+        'name': data['name'],
+        'price': data['price'],
+        'description': data['description'] ?? 'No description available'
+      };
+    }).toList();
   }
 }
 
@@ -272,7 +339,8 @@ class SubscriptionRecord {
   final Timestamp? endDate;
   final Map<String, dynamic> paymentDetails;
   final DocumentReference reference;
-  final DocumentReference? services;  // Reference to the service (plan) in the 'plans' collection
+  final DocumentReference? services;
+  final String serviceName;
 
   SubscriptionRecord({
     required this.isActive,
@@ -281,8 +349,31 @@ class SubscriptionRecord {
     required this.endDate,
     required this.paymentDetails,
     required this.reference,
-    required this.services,  // Plan reference
+    required this.services,
+    this.serviceName = 'Loading...',
   });
+
+  SubscriptionRecord copyWith({
+    bool? isActive,
+    String? serviceType,
+    Timestamp? startDate,
+    Timestamp? endDate,
+    Map<String, dynamic>? paymentDetails,
+    DocumentReference? reference,
+    DocumentReference? services,
+    String? serviceName,
+  }) {
+    return SubscriptionRecord(
+      isActive: isActive ?? this.isActive,
+      serviceType: serviceType ?? this.serviceType,
+      startDate: startDate ?? this.startDate,
+      endDate: endDate ?? this.endDate,
+      paymentDetails: paymentDetails ?? this.paymentDetails,
+      reference: reference ?? this.reference,
+      services: services ?? this.services,
+      serviceName: serviceName ?? this.serviceName,
+    );
+  }
 
   factory SubscriptionRecord.fromSnapshot(DocumentSnapshot snapshot) {
     final data = snapshot.data() as Map<String, dynamic>;
@@ -293,7 +384,7 @@ class SubscriptionRecord {
       endDate: data['endDate'] as Timestamp?,
       paymentDetails: data['paymentDetails'] as Map<String, dynamic>,
       reference: snapshot.reference,
-      services: data['services'] as DocumentReference?,  // Plan reference field
+      services: data['services'] as DocumentReference?,
     );
   }
 }

@@ -1,13 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'NotificationsScreen.dart';
-import 'OrderTracking.dart';
-import 'ProfileScreen.dart';
-import 'ScheduleScreen.dart';
 import 'SubscriptionScreen.dart';
 
 class HomeScreen extends StatefulWidget {
+  final Function(int) onTabTapped;
+
+  HomeScreen({required this.onTabTapped});
+
   @override
   _HomeScreenState createState() => _HomeScreenState();
 }
@@ -232,11 +232,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop(); // Close the dialog
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => ScheduleScreen()), // Redirect to ScheduleScreen
-                );
+                widget.onTabTapped(1); // Switch to ScheduleScreen
               },
               child: Text("Order Now"),
             ),
@@ -256,14 +252,14 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         SizedBox(height: 8),
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween, // Adjust to spread icons evenly
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             _buildQuickAction(
               icon: Icons.schedule,
               color: Colors.blue,
               label: 'Schedule',
               onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => ScheduleScreen()));
+                widget.onTabTapped(1); // Switch to ScheduleScreen
               },
             ),
             _buildQuickAction(
@@ -271,7 +267,7 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Colors.green,
               label: 'Track Order',
               onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => OrderTrackingScreen()));
+                widget.onTabTapped(2); // Switch to OrderTrackingScreen
               },
             ),
             _buildQuickAction(
@@ -279,7 +275,7 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Colors.yellow[700]!,
               label: 'Notifications',
               onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => NotificationsScreen()));
+                widget.onTabTapped(3); // Switch to NotificationsScreen
               },
             ),
             _buildQuickAction(
@@ -287,7 +283,11 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Colors.red,
               label: 'Subscriptions',
               onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => SubscriptionScreen()));
+                // Use Navigator.push to open SubscriptionScreen without bottom navigation
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => SubscriptionScreen()),
+                );
               },
             ),
           ],
@@ -353,8 +353,7 @@ class _HomeScreenState extends State<HomeScreen> {
             width: double.infinity, // Make the button fit the container width
             child: ElevatedButton(
               onPressed: () {
-                // Navigate to the SubscriptionScreen when button is clicked
-                Navigator.push(context, MaterialPageRoute(builder: (context) => SubscriptionScreen()));
+                widget.onTabTapped(1); // Switch to the ScheduleScreen (index 1 for tab navigation)
               },
               child: Text('Upgrade Plan'),
             ),
@@ -363,6 +362,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
 
   Widget _buildAvailablePlansSection() {
     if (availablePlans.isEmpty) {
@@ -474,8 +474,7 @@ class _HomeScreenState extends State<HomeScreen> {
               width: double.infinity, // Make button fit the container width
               child: ElevatedButton(
                 onPressed: () {
-                  // Navigate to the OrderTracking page when button is clicked
-                  Navigator.push(context, MaterialPageRoute(builder: (context) => OrderTrackingScreen()));
+                  widget.onTabTapped(2); // Switch to OrderTrackingScreen
                 },
                 child: Text('View All Orders'),
               ),

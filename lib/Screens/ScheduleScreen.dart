@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:geocoding/geocoding.dart';
 
 import 'EditOrderScreen.dart';
+import 'OrderSummaryScreen.dart';
 
 class ScheduleScreen extends StatefulWidget {
   final String? planId;
@@ -19,6 +20,14 @@ class ScheduleScreen extends StatefulWidget {
 class _ScheduleScreenState extends State<ScheduleScreen> {
   String? selectedPlan;
   String? serviceType;
+  LatLng? homePickupLoc;
+  LatLng? homeDropLoc;
+  LatLng? workPickupLoc;
+  LatLng? workDropLoc;
+  LatLng? tempHomePickupLoc;
+  LatLng? tempHomeDropLoc;
+  LatLng? tempWorkPickupLoc;
+  LatLng? tempWorkDropLoc;
   List<String> selectedDays = [];
   String? mainSelectedDay;
   List<String> timeSlots = [];
@@ -37,6 +46,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   bool showPickupMap = false;
   bool showDropMap = false;
   bool showSubscriptionCard = false;
+  bool _isMapInteracting = false;
 
   final List<String> serviceTypes = ['Pickup every 2 days', 'Pickup every 3 days'];
   final List<String> daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -117,15 +127,35 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
         String? planName = planSnapshot.exists ? planSnapshot['name'] : 'No plan name';
 
+        // Retrieve the location tree structure
+        Map<String, dynamic> locationData = doc['location'] ?? {};
+
         return {
           'id': doc.id,
-          'pickupLoc': doc['pickupLoc'],
-          'dropLoc': doc['dropLoc'],
+          'pickupLoc': locationData['pickup'] != null
+              ? LatLng(locationData['pickup'].latitude, locationData['pickup'].longitude)
+              : null,
+          'dropLoc': locationData['drop'] != null
+              ? LatLng(locationData['drop'].latitude, locationData['drop'].longitude)
+              : null,
+          'homePickupLoc': locationData['home']?['pickup'] != null
+              ? LatLng(locationData['home']['pickup'].latitude, locationData['home']['pickup'].longitude)
+              : null,
+          'homeDropLoc': locationData['home']?['drop'] != null
+              ? LatLng(locationData['home']['drop'].latitude, locationData['home']['drop'].longitude)
+              : null,
+          'workPickupLoc': locationData['work']?['pickup'] != null
+              ? LatLng(locationData['work']['pickup'].latitude, locationData['work']['pickup'].longitude)
+              : null,
+          'workDropLoc': locationData['work']?['drop'] != null
+              ? LatLng(locationData['work']['drop'].latitude, locationData['work']['drop'].longitude)
+              : null,
           'serviceType': doc['serviceType'],
           'startDate': doc['startDate']?.toDate(),
           'endDate': doc['endDate']?.toDate(),
           'paymentDetails': doc['paymentDetails'],
           'planName': planName,
+          'deliveryDate': doc['deliveryDate'] != null ? (doc['deliveryDate'] as Timestamp).toDate() : null,
         };
       }).toList());
 
@@ -136,6 +166,105 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       showError('Error fetching your orders.');
     }
   }
+
+  void _showSaveLocationDialog({required bool isPickupLocation}) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Save Location'),
+          content: const Text('Would you like to save this location as Home or Work?'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+              },
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                _saveLocationAs('home', isPickupLocation: isPickupLocation); // Save as Home
+                Navigator.of(context).pop();
+              },
+              child: const Text('Home'),
+            ),
+            TextButton(
+              onPressed: () {
+                _saveLocationAs('work', isPickupLocation: isPickupLocation); // Save as Work
+                Navigator.of(context).pop();
+              },
+              child: const Text('Work'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _saveLocationAs(String type, {required bool isPickupLocation}) {
+    setState(() {
+      if (type == 'home') {
+        if (isPickupLocation) {
+          tempHomePickupLoc = pickupLocation;
+          tempHomeDropLoc = pickupLocation;  // Automatically set drop to pickup location
+          dropController.text = pickupController.text;  // Update the drop text field with the same value
+        } else {
+          tempHomeDropLoc = dropLocation;
+        }
+      } else if (type == 'work') {
+        if (isPickupLocation) {
+          tempWorkPickupLoc = pickupLocation;
+          tempWorkDropLoc = pickupLocation;  // Automatically set drop to pickup location
+          dropController.text = pickupController.text;  // Update the drop text field with the same value
+        } else {
+          tempWorkDropLoc = dropLocation;
+        }
+      }
+      showSuccess('Location saved temporarily.');
+    });
+
+    Navigator.of(context).pop();  // Close the popup after selection
+  }
+
+
+  Future<void> loadSavedLocations() async {
+    User? user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+
+    if (userDoc.exists) {
+      setState(() {
+        if (userDoc['location.pickup'] != null) {
+          GeoPoint pickup = userDoc['location.pickup'];
+          pickupLocation = LatLng(pickup.latitude, pickup.longitude);
+        }
+        if (userDoc['location.drop'] != null) {
+          GeoPoint drop = userDoc['location.drop'];
+          dropLocation = LatLng(drop.latitude, drop.longitude);
+        }
+        if (userDoc['location.home.pickup'] != null) {
+          GeoPoint homePickup = userDoc['location.home.pickup'];
+          homePickupLoc = LatLng(homePickup.latitude, homePickup.longitude);
+        }
+        if (userDoc['location.home.drop'] != null) {
+          GeoPoint homeDrop = userDoc['location.home.drop'];
+          homeDropLoc = LatLng(homeDrop.latitude, homeDrop.longitude);
+        }
+        if (userDoc['location.work.pickup'] != null) {
+          GeoPoint workPickup = userDoc['location.work.pickup'];
+          workPickupLoc = LatLng(workPickup.latitude, workPickup.longitude);
+        }
+        if (userDoc['location.work.drop'] != null) {
+          GeoPoint workDrop = userDoc['location.work.drop'];
+          workDropLoc = LatLng(workDrop.latitude, workDrop.longitude);
+        }
+      });
+    }
+  }
+
+
+
 
   Future<void> _geocodeAddress(String address, {required bool isPickupLocation}) async {
     try {
@@ -255,10 +384,54 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         if (serviceType != null) buildDaysSelection(),
         if (selectedDays.isNotEmpty) buildTimeSlotsSelection(),
         if (timeSlots.length == 2) buildGoogleMapSection(),
-        if (isOrderComplete()) buildOrderSummary(),
+        if (isOrderComplete())
+          Column(
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => goToOrderSummary(context),
+                  child: const Text('Next'),
+                ),
+              ),
+            ],
+          ),
       ],
     );
   }
+
+  void goToOrderSummary(BuildContext context) async {
+    if (!isOrderComplete()) {
+      showError('Please complete the order details.');
+      return;
+    }
+
+    // Calculate the end date (28 days from the pickup date)
+    final DateTime endDate = selectedPickupDate!.add(const Duration(days: 28));
+
+    // Navigate to OrderSummaryScreen and wait for the result
+    final bool? isConfirmed = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => OrderSummaryScreen(
+          selectedPlan: selectedPlan!,
+          serviceType: serviceType!,
+          selectedDays: selectedDays,
+          timeSlots: timeSlots,
+          selectedPickupDate: selectedPickupDate!,
+          deliveryDate: deliveryDate!,
+          endDate: endDate,
+        ),
+      ),
+    );
+
+    if (isConfirmed == true) {
+      submitOrder();
+    } else {
+      showError('Order submission was cancelled.');
+    }
+  }
+
 
   Widget buildPlanSelection() {
     return Column(
@@ -295,6 +468,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     Text('₹${plan['price']}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
                     const SizedBox(height: 2),
                     Text(plan['description'], style: const TextStyle(fontSize: 12)),
+                    const SizedBox(height: 2),
+                    const Text('A monthly service for 28 days', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400)),
                   ],
                 ),
               ),
@@ -496,24 +671,36 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         const SizedBox(height: 8),
         Text('Selected Plan: $selectedPlan', style: const TextStyle(fontSize: 16)),
         Text('Service Type: $serviceType', style: const TextStyle(fontSize: 16)),
-        Text('Service Days: ${selectedDays.join(', ')}', style: const TextStyle(fontSize: 16)),
+        if (selectedDays.isNotEmpty)
+          Text(
+            'Service Days: ${selectedDays.take(3).join(', ')}', // Only take the first 3 days
+            style: const TextStyle(fontSize: 16),
+          ),
         Text('Time Slots: ${timeSlots.join(', ')}', style: const TextStyle(fontSize: 16)),
         const SizedBox(height: 8),
         const Divider(color: Colors.grey),
+
+        // Show start date
         if (selectedPickupDate != null)
           Text(
             'Selected Pickup Date: ${DateFormat('MMMM dd, yyyy').format(selectedPickupDate!)}',
             style: const TextStyle(fontSize: 16),
           ),
+
+        // Show delivery date (based on service type)
         if (deliveryDate != null)
           Text(
-            'Estimated Delivery Date: ${DateFormat('MMMM dd, yyyy').format(deliveryDate!)}',
+            'Delivery Date: ${DateFormat('MMMM dd, yyyy').format(deliveryDate!)}',
             style: const TextStyle(fontSize: 16),
           ),
-        if (pickupLocation != null)
-          Text('Pickup Location: ${pickupController.text}', style: const TextStyle(fontSize: 16)),
-        if (dropLocation != null)
-          Text('Drop Location: ${dropController.text}', style: const TextStyle(fontSize: 16)),
+
+        // Show end date (28 days from pickup date)
+        if (deliveryDate != null)
+          Text(
+            'End Date (28 days from start): ${DateFormat('MMMM dd, yyyy').format(selectedPickupDate!.add(const Duration(days: 28)))}',
+            style: const TextStyle(fontSize: 16),
+          ),
+
         const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,
@@ -525,6 +712,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       ],
     );
   }
+
 
   Future<void> submitOrder() async {
     try {
@@ -544,36 +732,62 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       DocumentReference planRef = FirebaseFirestore.instance.collection('plans').doc(selectedPlan);
       DocumentReference userRef = FirebaseFirestore.instance.collection('users').doc(userId);
 
-      // Capture only the start date day and end date day
-      String startDay = DateFormat('EEEE').format(selectedPickupDate!); // Start day in full (e.g., "Monday")
-      String endDay = DateFormat('EEEE').format(deliveryDate!); // End day in full (e.g., "Wednesday")
-      List<String> selectedDays = [startDay, endDay]; // Store only these days
+      // Calculate the delivery date based on service type
+      DateTime? deliveryDate;
+      if (serviceType == 'Pickup every 2 days') {
+        deliveryDate = selectedPickupDate!.add(const Duration(days: 2)); // Delivery 2 days after pickup
+      } else if (serviceType == 'Pickup every 3 days') {
+        deliveryDate = selectedPickupDate!.add(const Duration(days: 3)); // Delivery 3 days after pickup
+      } else {
+        showError('Invalid service type.');
+        return;
+      }
 
+      // Calculate the end date, which is 28 days from the selected start date (pickup date)
+      DateTime endDate = selectedPickupDate!.add(const Duration(days: 28));
+
+      // Ensure selectedDays only stores 3 days
+      List<String> limitedSelectedDays = selectedDays.take(3).toList(); // Limit to 3 days
+
+      // Order data to be submitted, including current pickup/drop and home/work locations inside the location tree
       Map<String, dynamic> orderData = {
         'createdAt': now,
         'updatedAt': now,
         'isActive': true,
-        'startDate': Timestamp.fromDate(selectedPickupDate!),
-        'endDate': deliveryDate != null ? Timestamp.fromDate(deliveryDate!) : null,
-        'pickupLoc': GeoPoint(pickupLocation!.latitude, pickupLocation!.longitude),
-        'dropLoc': GeoPoint(dropLocation!.latitude, dropLocation!.longitude),
+        'startDate': Timestamp.fromDate(selectedPickupDate!), // Start date is the selected pickup date
+        'endDate': Timestamp.fromDate(endDate), // End date is 28 days from the start date
         'serviceType': serviceType,
-        'selectedDays': selectedDays, // Store start and end day
-        'timeSlots': timeSlots, // Store the selected time slots
+        'selectedDays': limitedSelectedDays, // Store only the first 3 selected days
+        'timeSlots': timeSlots,
         'paymentDetails': {
           'amount': 100,
           'transactionId': "dummyTransaction123",
         },
         'services': planRef,
         'userId': userRef,
+        'deliveryDate': Timestamp.fromDate(deliveryDate), // Store the calculated delivery date
+        'location': {
+          'pickup': GeoPoint(pickupLocation!.latitude, pickupLocation!.longitude),
+          'drop': GeoPoint(dropLocation!.latitude, dropLocation!.longitude),
+          'home': {
+            'pickup': tempHomePickupLoc != null ? GeoPoint(tempHomePickupLoc!.latitude, tempHomePickupLoc!.longitude) : null,
+            'drop': tempHomeDropLoc != null ? GeoPoint(tempHomeDropLoc!.latitude, tempHomeDropLoc!.longitude) : null,
+          },
+          'work': {
+            'pickup': tempWorkPickupLoc != null ? GeoPoint(tempWorkPickupLoc!.latitude, tempWorkPickupLoc!.longitude) : null,
+            'drop': tempWorkDropLoc != null ? GeoPoint(tempWorkDropLoc!.latitude, tempWorkDropLoc!.longitude) : null,
+          }
+        }
       };
 
+      // Add the order data to Firestore
       await FirebaseFirestore.instance.collection('subscriptions').add(orderData);
       showSuccess('Order created successfully!');
 
       // Fetch user orders to display the subscription card
       fetchUserOrders();
 
+      // Reset temporary values after order submission
       setState(() {
         selectedPlan = null;
         serviceType = null;
@@ -585,6 +799,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         selectedPickupDate = null;
         isPickupConfirmed = false;
         isDropConfirmed = false;
+
+        tempHomePickupLoc = null;
+        tempHomeDropLoc = null;
+        tempWorkPickupLoc = null;
+        tempWorkDropLoc = null;
       });
     } catch (error) {
       showError('Failed to submit order. Please try again.');
@@ -610,19 +829,46 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         ),
         const SizedBox(height: 16),
         if (showPickupMap && !isPickupConfirmed)
-          SizedBox(
-            height: 300,
-            child: GestureDetector(
-              child: GoogleMap(
-                onMapCreated: (controller) => mapController = controller,
-                initialCameraPosition: CameraPosition(
-                  target: pickupLocation ?? LatLng(17.4239, 78.4738),
-                  zoom: 14.0,
+          GestureDetector(
+            onPanDown: (_) {
+              setState(() {
+                _isMapInteracting = true; // Disable scrolling when interacting with the map
+              });
+            },
+            onPanCancel: () {
+              setState(() {
+                _isMapInteracting = false; // Re-enable scrolling after interaction
+              });
+            },
+            onPanEnd: (_) {
+              setState(() {
+                _isMapInteracting = false; // Re-enable scrolling when interaction ends
+              });
+            },
+            child: SizedBox(
+              height: 300,
+              child: AbsorbPointer(
+                absorbing: _isMapInteracting, // Absorb pointer events during interaction
+                child: GoogleMap(
+                  onMapCreated: (controller) => mapController = controller,
+                  initialCameraPosition: CameraPosition(
+                    target: pickupLocation ?? LatLng(17.4239, 78.4738), // Initial location
+                    zoom: 14.0,
+                  ),
+                  markers: markers,
+                  onTap: (position) {
+                    _onMapTap(position, true); // Handle tapping to set pickup location
+                  },
+                  onCameraMove: (position) {
+                    if (_isMapInteracting) {
+                      // Update the pickup marker position
+                      setState(() {
+                        pickupLocation = position.target;
+                        _updatePickupMarker(position.target);
+                      });
+                    }
+                  },
                 ),
-                markers: markers,
-                onTap: (position) {
-                  _onMapTap(position, true);
-                },
               ),
             ),
           ),
@@ -641,6 +887,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                         dropController.text = pickupController.text;
                         dropLocation = pickupLocation;
                       });
+                      _showSaveLocationDialog(isPickupLocation: true);
                     },
                     child: const Text('Confirm'),
                   ),
@@ -679,7 +926,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           decoration: const InputDecoration(labelText: 'Enter Drop Location'),
           onSubmitted: (value) {
             if (value.isNotEmpty) {
-              _geocodeAddress(value, isPickupLocation: false);
+              _geocodeAddress(value, isPickupLocation: false); // Geocode drop location
+              _handleNewDropLocation(); // Handle saving the new drop location
             }
           },
           readOnly: isDropConfirmed,
@@ -691,12 +939,21 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             child: GoogleMap(
               onMapCreated: (controller) => mapController = controller,
               initialCameraPosition: CameraPosition(
-                target: dropLocation ?? LatLng(17.4239, 78.4738),
+                target: dropLocation ?? LatLng(17.4239, 78.4738), // Initial location
                 zoom: 14.0,
               ),
               markers: markers,
               onTap: (position) {
-                _onMapTap(position, false);
+                _onMapTap(position, false); // Handle tapping to set drop location
+              },
+              onCameraMove: (position) {
+                if (_isMapInteracting) {
+                  // Update drop marker position
+                  setState(() {
+                    dropLocation = position.target;
+                    _updateDropMarker(position.target);
+                  });
+                }
               },
             ),
           ),
@@ -713,6 +970,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                         isDropConfirmed = true;
                         showDropMap = false;
                       });
+                      _handleNewDropLocation(); // Handle saving new drop location
                     },
                     child: const Text('Confirm'),
                   ),
@@ -738,21 +996,72 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
+
+  void _updatePickupMarker(LatLng newPosition) {
+    markers.removeWhere((m) => m.markerId.value == 'pickup');
+    markers.add(Marker(
+      markerId: const MarkerId('pickup'),
+      position: newPosition,
+      draggable: true,
+      onDragEnd: (newPos) {
+        setState(() {
+          pickupLocation = newPos; // Update the pickup location after dragging
+          mapController?.animateCamera(CameraUpdate.newLatLng(newPos)); // Move camera with marker
+        });
+      },
+    ));
+  }
+
+  void _updateDropMarker(LatLng newPosition) {
+    markers.removeWhere((m) => m.markerId.value == 'drop');
+    markers.add(Marker(
+      markerId: const MarkerId('drop'),
+      position: newPosition,
+      draggable: true,
+      onDragEnd: (newPos) {
+        setState(() {
+          dropLocation = newPos; // Update the drop location after dragging
+          mapController?.animateCamera(CameraUpdate.newLatLng(newPos)); // Move camera with marker
+        });
+      },
+    ));
+  }
+
+
   void _onMapTap(LatLng position, bool isPickupLocation) {
     setState(() {
       if (isPickupLocation) {
         pickupLocation = position;
         markers.removeWhere((m) => m.markerId.value == 'pickup');
-        markers.add(Marker(markerId: MarkerId('pickup'), position: pickupLocation!, infoWindow: InfoWindow(title: 'Pickup Location')));
+        markers.add(Marker(
+          markerId: const MarkerId('pickup'),
+          position: pickupLocation!,
+          draggable: true,
+          onDragEnd: (newPos) {
+            setState(() {
+              pickupLocation = newPos; // Update after dragging
+            });
+          },
+        ));
         pickupController.text = '${pickupLocation!.latitude}, ${pickupLocation!.longitude}';
       } else {
         dropLocation = position;
         markers.removeWhere((m) => m.markerId.value == 'drop');
-        markers.add(Marker(markerId: MarkerId('drop'), position: dropLocation!, infoWindow: InfoWindow(title: 'Drop Location')));
+        markers.add(Marker(
+          markerId: const MarkerId('drop'),
+          position: dropLocation!,
+          draggable: true,
+          onDragEnd: (newPos) {
+            setState(() {
+              dropLocation = newPos; // Update after dragging
+            });
+          },
+        ));
         dropController.text = '${dropLocation!.latitude}, ${dropLocation!.longitude}';
       }
     });
   }
+
 
   void handleTimeSlotSelection(String slot) {
     setState(() {
@@ -765,6 +1074,44 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       }
     });
   }
+
+  void _handleNewDropLocation() {
+    if (dropLocation != pickupLocation) {
+      // Show a dialog asking to update the home/work drop location
+      showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: const Text('Save Drop Location'),
+            content: const Text('You entered a different drop location. Would you like to save this as your Home or Work drop location?'),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();  // Close the dialog without saving
+                },
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  _saveLocationAs('home', isPickupLocation: false);  // Save as home drop
+                  Navigator.of(context).pop();  // Close the dialog
+                },
+                child: const Text('Home'),
+              ),
+              TextButton(
+                onPressed: () {
+                  _saveLocationAs('work', isPickupLocation: false);  // Save as work drop
+                  Navigator.of(context).pop();  // Close the dialog
+                },
+                child: const Text('Work'),
+              ),
+            ],
+          );
+        },
+      );
+    }
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -818,6 +1165,13 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       itemCount: userOrders.length,
       itemBuilder: (context, index) {
         final order = userOrders[index];
+
+        // Retrieve the deliveryDate and convert it from Timestamp to DateTime
+        var deliveryDate = order['deliveryDate'];
+        if (deliveryDate != null && deliveryDate is Timestamp) {
+          deliveryDate = deliveryDate.toDate();
+        }
+
         return Card(
           margin: const EdgeInsets.symmetric(vertical: 8),
           child: Padding(
@@ -826,10 +1180,37 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Service Type: ${order['serviceType']}', style: const TextStyle(fontSize: 16)),
-                Text('Pickup Location: LatLng(${order['pickupLoc'].latitude}, ${order['pickupLoc'].longitude})'),
-                Text('Drop Location: LatLng(${order['dropLoc'].latitude}, ${order['dropLoc'].longitude})'),
+
+                // Display current pickup and drop locations
+                if (order['pickupLoc'] != null)
+                  Text('Pickup Location: LatLng(${order['pickupLoc'].latitude}, ${order['pickupLoc'].longitude})'),
+                if (order['dropLoc'] != null)
+                  Text('Drop Location: LatLng(${order['dropLoc'].latitude}, ${order['dropLoc'].longitude})'),
+
+                // Display home pickup and drop locations if available
+                if (order['homePickupLoc'] != null)
+                  Text('Home Pickup Location: LatLng(${order['homePickupLoc'].latitude}, ${order['homePickupLoc'].longitude})'),
+                if (order['homeDropLoc'] != null)
+                  Text('Home Drop Location: LatLng(${order['homeDropLoc'].latitude}, ${order['homeDropLoc'].longitude})'),
+
+                // Display work pickup and drop locations if available
+                if (order['workPickupLoc'] != null)
+                  Text('Work Pickup Location: LatLng(${order['workPickupLoc'].latitude}, ${order['workPickupLoc'].longitude})'),
+                if (order['workDropLoc'] != null)
+                  Text('Work Drop Location: LatLng(${order['workDropLoc'].latitude}, ${order['workDropLoc'].longitude})'),
+
+                // Show start date
                 Text('Start Date: ${DateFormat('MMMM dd, yyyy').format(order['startDate'])}'),
+
+                // Show delivery date if it exists
+                if (deliveryDate != null)
+                  Text(
+                    'Delivery Date: ${DateFormat('MMMM dd, yyyy').format(deliveryDate)}',
+                  ),
+
+                // Show end date (stored in the database as 'endDate')
                 Text('End Date: ${DateFormat('MMMM dd, yyyy').format(order['endDate'])}'),
+
                 Text('Amount Paid: ₹${order['paymentDetails']['amount']}'),
 
                 // Display the selected days
@@ -858,15 +1239,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     IconButton(
                       icon: Icon(Icons.edit),
                       onPressed: () {
-                        // Navigate to EditOrderScreen and pass the order ID
-                        Navigator.push(
-                          context,
+                        Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (context) => EditOrderScreen(subscriptionId: order['id']),
                           ),
                         );
                       },
-                    ),
+                    )
+
                   ],
                 ),
               ],
@@ -876,7 +1256,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       },
     );
   }
-
 
   Future<void> showPlanUpgradeDialog(String orderId) async {
     final currentOrder = userOrders.firstWhere((order) => order['id'] == orderId);
