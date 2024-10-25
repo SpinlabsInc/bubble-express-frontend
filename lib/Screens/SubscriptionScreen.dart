@@ -77,16 +77,15 @@ class SubscriptionCard extends StatefulWidget {
 }
 
 class _SubscriptionCardState extends State<SubscriptionCard> {
-  late SubscriptionRecord subscription;  // Store subscription in state
+  late SubscriptionRecord subscription;
 
   @override
   void initState() {
     super.initState();
-    subscription = widget.subscription;  // Initialize with the passed subscription
-    _fetchServiceName();  // Fetch service name initially
+    subscription = widget.subscription;
+    _fetchServiceName();
   }
 
-  // Fetches the service name from Firebase and updates the UI
   Future<void> _fetchServiceName() async {
     if (subscription.services != null) {
       try {
@@ -117,70 +116,155 @@ class _SubscriptionCardState extends State<SubscriptionCard> {
 
   @override
   Widget build(BuildContext context) {
-    final serviceType = subscription.serviceType ?? 'N/A';
     final amount = subscription.paymentDetails['amount'] ?? 'N/A';
     final startDate = subscription.startDate?.toDate().toLocal().toString().split(' ')[0] ?? 'N/A';
     final endDate = subscription.endDate?.toDate().toLocal().toString().split(' ')[0] ?? 'N/A';
 
+    final DateTime? startDateObject = subscription.startDate?.toDate();
     final DateTime? endDateObject = subscription.endDate?.toDate();
     int remainingDays = 0;
-    if (endDateObject != null) {
-      remainingDays = endDateObject.difference(DateTime.now()).inDays;
+
+    if (startDateObject != null && endDateObject != null) {
+      final today = DateTime.now();
+
+      if (today.isAfter(endDateObject)) {
+        remainingDays = 0;
+      } else if (today.isBefore(startDateObject)) {
+        remainingDays = endDateObject.difference(startDateObject).inDays;
+      } else {
+        remainingDays = endDateObject.difference(today).inDays;
+      }
     }
 
-    final remainingDaysText = remainingDays >= 0 ? '$remainingDays days' : 'Subscription Ended';
+    final remainingDaysText = remainingDays > 0 ? '$remainingDays days' : 'Subscription Ended';
     final statusText = subscription.isActive ? 'Active' : 'Inactive';
     final statusColor = subscription.isActive ? Colors.green : Colors.red;
 
     return Card(
-      elevation: 8,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      margin: EdgeInsets.all(10),
+      elevation: 0, // Remove shadow
+      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8), // Adjust card margins
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16.0), // Main padding
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Service Name: ${subscription.serviceName}', style: TextStyle(fontSize: 18)),
-            SizedBox(height: 8),
-            Text('Service Type: $serviceType', style: TextStyle(fontSize: 18)),
-            SizedBox(height: 8),
-            Text('Amount: ₹$amount', style: TextStyle(fontSize: 16)),
-            SizedBox(height: 8),
-            Text('Start Date: $startDate', style: TextStyle(fontSize: 16)),
-            SizedBox(height: 8),
-            Text('End Date: $endDate', style: TextStyle(fontSize: 16)),
-            SizedBox(height: 8),
-            Text('Remaining Days: $remainingDaysText', style: TextStyle(fontSize: 16, color: Colors.blue)),
-            SizedBox(height: 8),
-            Text('Status: $statusText', style: TextStyle(fontSize: 16, color: statusColor)),
-            SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
-                  child: ElevatedButton(
-                    onPressed: subscription.isActive
-                        ? () => _updateSubscriptionStatus(context, subscription.reference, false)
-                        : () => _updateSubscriptionStatus(context, subscription.reference, true),
-                    child: Text(subscription.isActive ? 'Pause' : 'Resume'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: subscription.isActive ? Colors.orange : Colors.green,
-                      minimumSize: Size(double.infinity, 50),
+                  child: Text(
+                    '${subscription.serviceName}', // Plan Name
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
-                SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => _showUpgradeDialog(context),
-                    child: Text('Upgrade'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      minimumSize: Size(double.infinity, 50),
-                    ),
+                IconButton(
+                  icon: Icon(Icons.info_outline), // Changed to "i" icon
+                  onPressed: () {
+                    // Redirect to PlansPageScreen when the icon is clicked
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => PlansPageScreen()),
+                    );
+                  },
+                ),
+              ],
+            ),
+            SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // Service Type on the Left Side
+                Text(
+                  'Pickup every 2 days',
+                  style: TextStyle(fontSize: 14),
+                ),
+                // Price on the Right Side
+                Text(
+                  '₹$amount',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ],
+            ),
+            SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(Icons.check_circle, color: statusColor),
+                SizedBox(width: 4),
+                Text(
+                  statusText,
+                  style: TextStyle(color: statusColor, fontSize: 14),
+                ),
+              ],
+            ),
+            SizedBox(height: 8),
+            ExpansionTile(
+              title: Text(
+                'Hide Details',
+                style: TextStyle(fontSize: 14),
+              ),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4.0), // Details padding
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildDetailRow('Start Date', startDate),
+                      SizedBox(height: 4),
+                      _buildDetailRow('End Date', endDate),
+                      SizedBox(height: 4),
+                      _buildDetailRow('Remaining Days', remainingDaysText),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 16),
+            // Upgrade Plan Button with White Text
+            ElevatedButton(
+              onPressed: () => _showUpgradeDialog(context),
+              child: Text(
+                'Upgrade Plan',
+                style: TextStyle(color: Colors.white), // White text for Upgrade button
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black, // Matching the color in the image
+                minimumSize: Size(double.infinity, 50),
+              ),
+            ),
+            SizedBox(height: 8),
+            // Pause/Resume Subscription Button with Conditional Text Color
+            ElevatedButton(
+              onPressed: subscription.isActive
+                  ? () => _updateSubscriptionStatus(context, subscription.reference, false)
+                  : () => _updateSubscriptionStatus(context, subscription.reference, true),
+              child: Text(
+                subscription.isActive ? 'Pause Subscription' : 'Resume Subscription',
+                style: TextStyle(
+                  color: subscription.isActive ? Colors.black : Colors.white, // Pause -> Black, Resume -> White
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: subscription.isActive ? Colors.white : Colors.grey, // Matching pause/resume button color
+                minimumSize: Size(double.infinity, 50),
+              ),
+            ),
+            SizedBox(height: 16),
+            Center(
+              child: TextButton(
+                onPressed: () {
+                  // Feedback action
+                },
+                child: Text(
+                  'Provide Feedback',
+                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                ),
+              ),
             ),
           ],
         ),
@@ -188,7 +272,22 @@ class _SubscriptionCardState extends State<SubscriptionCard> {
     );
   }
 
-  // Updates the subscription status in Firebase and reflects it in the UI
+  Widget _buildDetailRow(String label, String value) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+        ),
+        Text(
+          value,
+          style: TextStyle(fontSize: 14),
+        ),
+      ],
+    );
+  }
+
   Future<void> _updateSubscriptionStatus(BuildContext context, DocumentReference subscriptionRef, bool newStatus) async {
     try {
       await subscriptionRef.update({'isActive': newStatus});
@@ -207,84 +306,79 @@ class _SubscriptionCardState extends State<SubscriptionCard> {
     }
   }
 
-  // Shows a dialog for upgrading the plan and confirms the upgrade
-  Future<void> _showUpgradeDialog(BuildContext parentContext) async {
+  Future<void> _showUpgradeDialog(BuildContext context) async {
     final availablePlans = await _fetchAvailablePlans();
     final currentAmount = subscription.paymentDetails['amount'] ?? 0;
+    String? selectedPlanId = subscription.services?.id;
 
     showDialog(
-      context: parentContext,
+      context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Upgrade Plan'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: availablePlans.map((plan) {
-              final isCurrentPlan = plan['id'] == subscription.services!.id;
-              final priceDifference = plan['price'] - currentAmount;
-
-              return ListTile(
-                title: Text(plan['name']),
-                subtitle: Text(priceDifference >= 0
-                    ? '₹$priceDifference extra from current plan'
-                    : '₹${priceDifference.abs()} less from current plan'),
-                trailing: IconButton(
-                  icon: Icon(Icons.info_outline),
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text('Upgrade Your Plan', style: TextStyle(fontWeight: FontWeight.bold)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Choose a new plan to upgrade your subscription.'),
+                  SizedBox(height: 16),
+                  Column(
+                    children: availablePlans.map((plan) {
+                      final isCurrentPlan = plan['id'] == subscription.services!.id;
+                      return RadioListTile<String>(
+                        value: plan['id'],
+                        groupValue: selectedPlanId,
+                        title: Text(
+                          '${plan['name']} ${isCurrentPlan ? "(Current)" : ""}',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: isCurrentPlan ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
+                        onChanged: (String? value) {
+                          if (!isCurrentPlan) {
+                            setState(() {
+                              selectedPlanId = value;
+                            });
+                          }
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
                   onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => PlanDetailsPage(plan: plan),
-                      ),
-                    );
+                    Navigator.of(context).pop(); // Close dialog without any action
                   },
+                  child: Text('Cancel'),
                 ),
-                enabled: !isCurrentPlan,
-                tileColor: isCurrentPlan ? Colors.grey.shade300 : null,
-                onTap: !isCurrentPlan
-                    ? () {
-                  Navigator.of(context).pop(); // Close the upgrade dialog
-                  _confirmPlanUpgrade(parentContext, plan['id'], plan['price']); // Show confirmation dialog
-                }
-                    : null,
-              );
-            }).toList(),
-          ),
+                TextButton(
+                  onPressed: selectedPlanId != subscription.services!.id
+                      ? () async {
+                    await _upgradePlan(context, selectedPlanId!, currentAmount);
+                    Navigator.of(context).pop(); // Close the dialog after upgrading
+                  }
+                      : null, // Disable button if the same plan is selected
+                  child: Text(
+                    'Confirm Upgrade',
+                    style: TextStyle(
+                      color: Colors.black, // Black text for Confirm Upgrade button
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
   }
 
-  // Confirms the plan upgrade and shows success or failure messages
-  Future<void> _confirmPlanUpgrade(BuildContext parentContext, String newPlanId, int newPrice) async {
-    showDialog(
-      context: parentContext,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Confirm Upgrade'),
-          content: Text('Are you sure you want to upgrade to the new plan?'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop(); // Dismiss the dialog if the user cancels
-              },
-              child: Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop(); // Close the confirmation dialog
-                _upgradePlan(parentContext, newPlanId, newPrice); // Proceed with upgrading the plan
-              },
-              child: Text('Yes, Upgrade'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // Upgrades the subscription plan in Firebase and reflects the changes in the UI
-  Future<void> _upgradePlan(BuildContext parentContext, String newPlanId, int newPrice) async {
+  Future<void> _upgradePlan(BuildContext context, String newPlanId, int newPrice) async {
     final subscriptionRef = subscription.reference;
 
     try {
@@ -299,20 +393,17 @@ class _SubscriptionCardState extends State<SubscriptionCard> {
       SubscriptionRecord updatedSubscription = SubscriptionRecord.fromSnapshot(updatedSubscriptionDoc);
 
       setState(() {
-        subscription = updatedSubscription;  // Update the state with the new subscription
+        subscription = updatedSubscription; // Update the state with the new subscription
       });
 
       // Refetch the service name for the newly upgraded plan
       await _fetchServiceName();
 
-      // Show success message immediately after the Firebase update
-      ScaffoldMessenger.of(parentContext).showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Plan upgraded successfully!')),
       );
-
     } catch (e) {
-      // Handle errors by showing a failure message
-      ScaffoldMessenger.of(parentContext).showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error upgrading plan. Please try again.')),
       );
     }
