@@ -38,66 +38,124 @@ class _LoginScreenState extends State<LoginScreen> {
         Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => MainScreen()));
       } else {
-        print('No user data found');
+        // If the user exists in FirebaseAuth but not in Firestore
+        _showNoUserPopup();
       }
     } catch (e) {
-      print("Sign in failed: $e");
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Failed to sign in: $e'),
-      ));
+      if (e.toString().contains("user-not-found") || e.toString().contains("wrong-password")) {
+        // Handle user not found or wrong password
+        _showNoUserPopup(); // Show dialog for "No account found"
+      } else if (e.toString().contains("permission-denied")) {
+        // Handle Firestore permission denied error
+        _showNoUserPopup(); // Reuse the same popup for permission-denied
+      } else {
+        // Handle other errors with a general error popup
+        _showErrorPopup(e);
+      }
     }
   }
 
-  // Google Sign In
+  // Google Sign In with email existence check
   Future<void> _signInWithGoogle() async {
     try {
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-      if (googleUser != null) {
-        final GoogleSignInAuthentication googleAuth =
-        await googleUser.authentication;
+      if (googleUser == null) {
+        // The user canceled the sign-in
+        return;
+      }
+
+      // Check if user email exists in Firestore users collection
+      final QuerySnapshot userQuery = await _firestore
+          .collection('users')
+          .where('email', isEqualTo: googleUser.email)
+          .get();
+
+      if (userQuery.docs.isNotEmpty) {
+        // User exists in Firestore, proceed with Google authentication
+        final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
         final AuthCredential credential = GoogleAuthProvider.credential(
           accessToken: googleAuth.accessToken,
           idToken: googleAuth.idToken,
         );
 
-        QuerySnapshot userQuery = await _firestore
+        // Sign in with Firebase
+        UserCredential userCredential = await _auth.signInWithCredential(credential);
+
+        DocumentSnapshot userDoc = await _firestore
             .collection('users')
-            .where('email', isEqualTo: googleUser.email)
+            .doc(userCredential.user!.uid)
             .get();
 
-        if (userQuery.docs.isNotEmpty) {
-          UserCredential userCredential =
-          await _auth.signInWithCredential(credential);
-
-          DocumentSnapshot userDoc = await _firestore
-              .collection('users')
-              .doc(userCredential.user!.uid)
-              .get();
-
-          if (userDoc.exists) {
-            String role = userDoc['role'];
-            print('User role: $role');
-
-            Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => MainScreen()));
-          }
-        } else {
-          print('No user account found for this email');
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content:
-            Text('No account found for this email. Please sign up first.'),
-          ));
-
-          await _auth.signOut();
-          await _googleSignIn.disconnect();
+        if (userDoc.exists) {
+          // User found, proceed to main screen
+          String role = userDoc['role'];
+          print('User role: $role');
+          Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => MainScreen()));
         }
+      } else {
+        // No user found with this email, show a popup
+        _showNoUserPopup();
       }
     } catch (e) {
-      print("Google sign in failed: $e");
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Failed to sign in with Google: $e'),
-      ));
+      if (e.toString().contains("permission-denied")) {
+        // Handle Firestore permission denied error and show a dialog
+        _showNoUserPopup();  // You can reuse the same popup
+      } else {
+        print("Google sign in failed: $e");
+        _showErrorPopup(e);  // Show error popup instead of Snackbar
+      }
     }
+  }
+
+  // Show a dialog informing the user that no account exists
+  void _showNoUserPopup() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('No Account Found'),
+          content: Text('No account exists with these credentials. Please sign up.'),
+          actions: <Widget>[
+            TextButton(
+              child: Text('Sign Up'),
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+                // Navigate to SignupScreen
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => SignupScreen()));
+              },
+            ),
+            TextButton(
+              child: Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+// Show an error popup if sign-in fails for another reason
+  void _showErrorPopup(Object e) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Sign-In Failed'),
+          content: Text('Failed to sign in: $e'),
+          actions: <Widget>[
+            TextButton(
+              child: Text('OK'),
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   // Facebook Login (Functionality left blank for now)

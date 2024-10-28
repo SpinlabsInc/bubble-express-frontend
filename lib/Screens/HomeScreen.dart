@@ -1,13 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'NotificationsScreen.dart';
-import 'OrderTracking.dart';
-import 'ProfileScreen.dart';
-import 'ScheduleScreen.dart';
 import 'SubscriptionScreen.dart';
 
 class HomeScreen extends StatefulWidget {
+  final Function(int) onTabTapped;
+
+  HomeScreen({required this.onTabTapped});
+
   @override
   _HomeScreenState createState() => _HomeScreenState();
 }
@@ -171,31 +171,74 @@ class _HomeScreenState extends State<HomeScreen> {
         itemCount: promotions.length,
         itemBuilder: (context, index) {
           Promotion promo = promotions[index];
-          return Container(
-            width: 250,
-            margin: EdgeInsets.only(right: 16),
-            padding: EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.blue[100],
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  promo.title,
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.blue[800]),
-                ),
-                SizedBox(height: 8),
-                Text(
-                  promo.description,
-                  style: TextStyle(fontSize: 14, color: Colors.blue[600]),
-                ),
-              ],
+          return GestureDetector(
+            onTap: () {
+              _showPromotionDialog(promo);
+            },
+            child: Container(
+              width: 250,
+              margin: EdgeInsets.only(right: 16),
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.blue[100],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    promo.title,
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue[800]),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    promo.description,
+                    style: TextStyle(fontSize: 14, color: Colors.blue[600]),
+                  ),
+                ],
+              ),
             ),
           );
         },
       ),
+    );
+  }
+
+  void _showPromotionDialog(Promotion promo) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(promo.title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(promo.description),
+              SizedBox(height: 16),
+              Text("This is some demo information for this promotion."),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+              },
+              child: Text("Close"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+                widget.onTabTapped(1); // Switch to ScheduleScreen
+              },
+              child: Text("Order Now"),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -209,14 +252,14 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         SizedBox(height: 8),
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween, // Adjust to spread icons evenly
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             _buildQuickAction(
               icon: Icons.schedule,
               color: Colors.blue,
               label: 'Schedule',
               onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => ScheduleScreen()));
+                widget.onTabTapped(1); // Switch to ScheduleScreen
               },
             ),
             _buildQuickAction(
@@ -224,7 +267,7 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Colors.green,
               label: 'Track Order',
               onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => OrderTrackingScreen()));
+                widget.onTabTapped(2); // Switch to OrderTrackingScreen
               },
             ),
             _buildQuickAction(
@@ -232,7 +275,7 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Colors.yellow[700]!,
               label: 'Notifications',
               onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => NotificationsScreen()));
+                widget.onTabTapped(3); // Switch to NotificationsScreen
               },
             ),
             _buildQuickAction(
@@ -240,7 +283,11 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Colors.red,
               label: 'Subscriptions',
               onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => SubscriptionScreen()));
+                // Use Navigator.push to open SubscriptionScreen without bottom navigation
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => SubscriptionScreen()),
+                );
               },
             ),
           ],
@@ -306,8 +353,7 @@ class _HomeScreenState extends State<HomeScreen> {
             width: double.infinity, // Make the button fit the container width
             child: ElevatedButton(
               onPressed: () {
-                // Navigate to the SubscriptionScreen when button is clicked
-                Navigator.push(context, MaterialPageRoute(builder: (context) => SubscriptionScreen()));
+                widget.onTabTapped(1); // Switch to the ScheduleScreen (index 1 for tab navigation)
               },
               child: Text('Upgrade Plan'),
             ),
@@ -316,6 +362,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
 
   Widget _buildAvailablePlansSection() {
     if (availablePlans.isEmpty) {
@@ -328,6 +375,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Container(
+      width: double.infinity, // Make it fit the screen width
       padding: EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -342,14 +390,12 @@ class _HomeScreenState extends State<HomeScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           SizedBox(height: 8),
-          Wrap(
-            spacing: 8.0, // space between items
-            runSpacing: 8.0, // space between lines
+          Column(
             children: availablePlans.map((plan) {
               return Container(
-                width: MediaQuery.of(context).size.width * 0.4, // Adjust to fit items in a row
-                height: 120, // Set fixed height to equalize containers
+                margin: EdgeInsets.only(bottom: 8), // Add margin between items
                 padding: EdgeInsets.all(12),
+                width: double.infinity, // Make the container fit the screen width
                 decoration: BoxDecoration(
                   color: Colors.blue[50],
                   borderRadius: BorderRadius.circular(8),
@@ -366,7 +412,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Text(
                       plan.description,
                       style: TextStyle(fontSize: 14),
-                      maxLines: 2, // To ensure text fits within the height limit
+                      maxLines: 2, // Ensure text fits within the height limit
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
@@ -428,8 +474,7 @@ class _HomeScreenState extends State<HomeScreen> {
               width: double.infinity, // Make button fit the container width
               child: ElevatedButton(
                 onPressed: () {
-                  // Navigate to the OrderTracking page when button is clicked
-                  Navigator.push(context, MaterialPageRoute(builder: (context) => OrderTrackingScreen()));
+                  widget.onTabTapped(2); // Switch to OrderTrackingScreen
                 },
                 child: Text('View All Orders'),
               ),

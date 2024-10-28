@@ -4,10 +4,15 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart'; // Firebase Storage
 import 'LoginScreen.dart';
 import '../main.dart';
 
 class SignupScreen extends StatefulWidget {
+  final GoogleSignInAccount? googleUser;
+
+  SignupScreen({this.googleUser});
+
   @override
   _SignupScreenState createState() => _SignupScreenState();
 }
@@ -25,6 +30,17 @@ class _SignupScreenState extends State<SignupScreen> {
   File? _profileImage;
   String? _profilePhotoUrl;
 
+  @override
+  void initState() {
+    super.initState();
+
+    if (widget.googleUser != null) {
+      _emailController.text = widget.googleUser!.email;
+      _nameController.text = widget.googleUser!.displayName ?? '';
+      _profilePhotoUrl = widget.googleUser!.photoUrl ?? 'assets/default_profile_icon.png';
+    }
+  }
+
   Future<void> _pickImage() async {
     final pickedFile = await ImagePicker().pickImage(source: ImageSource.gallery);
 
@@ -37,81 +53,184 @@ class _SignupScreenState extends State<SignupScreen> {
     });
   }
 
-  Future<void> _signUp() async {
+  Future<String?> _uploadProfileImage(User user) async {
     try {
-      // Create user with Firebase Auth
-      UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
+      if (_profileImage == null) return null;
+
+      Reference storageReference = FirebaseStorage.instance.ref().child('profile_images/${user.uid}.jpg');
+      UploadTask uploadTask = storageReference.putFile(_profileImage!);
+      TaskSnapshot taskSnapshot = await uploadTask;
+      String downloadUrl = await taskSnapshot.ref.getDownloadURL();
+      return downloadUrl;
+    } catch (e) {
+      print('Error uploading profile image: $e');
+      return null;
+    }
+  }
+
+  // Method to handle Google Sign-Up
+  Future<void> _signUpWithGoogle() async {
+    try {
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+      if (googleUser == null) return;
+
+      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+      final AuthCredential credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
       );
 
-      // Upload profile image if available
-      if (_profileImage != null) {
-        // Logic to upload image to Firebase Storage can go here.
-        // For now, assuming profilePhotoUrl gets the link after upload.
-        _profilePhotoUrl = 'uploaded_image_url';  // Replace with actual uploaded URL
-      } else if (_profilePhotoUrl == null) {
-        // If no Google image found, set default image from assets
-        _profilePhotoUrl = 'assets/default_profile_icon.png';
+      UserCredential userCredential = await _auth.signInWithCredential(credential);
+
+      try {
+        // Check if user already exists in Firestore
+        QuerySnapshot userQuery = await _firestore
+            .collection('users')
+            .where('email', isEqualTo: googleUser.email)
+            .get();
+
+        if (userQuery.docs.isNotEmpty) {
+          // User already exists, show popup
+          _showAccountExistsPopup();
+        } else {
+          // Add user information to Firestore
+          _profilePhotoUrl = googleUser.photoUrl ?? 'assets/default_profile_icon.png';
+          await _firestore.collection('users').doc(userCredential.user!.uid).set({
+            'email': googleUser.email,
+            'name': googleUser.displayName ?? '',
+            'profilePhotoUrl': _profilePhotoUrl,
+            'role': 'user',
+            'createdAt': Timestamp.now(),
+            'updatedAt': Timestamp.now(),
+          });
+
+          // Show popup to complete profile
+          _showAddressAndPhonePopup(userCredential.user!);
+        }
+      } catch (e) {
+        if (e.toString().contains("PERMISSION_DENIED")) {
+          _showAccountExistsPopup();
+        } else {
+          print("Error: $e");
+        }
       }
-
-      // Add user information to Firestore
-      await _firestore.collection('users').doc(userCredential.user!.uid).set({
-        'email': _emailController.text.trim(),
-        'name': _nameController.text.trim(),
-        'phone': _phoneController.text.trim(),
-        'address': _addressController.text.trim(),
-        'profilePhotoUrl': _profilePhotoUrl ?? '', // Use either Google image, uploaded image, or default
-        'role': 'user',
-        'createdAt': Timestamp.now(),
-        'updatedAt': Timestamp.now(),
-      });
-
-      // Navigate to the main screen after successful signup
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => MainScreen()));
     } catch (e) {
-      print('Signup failed: $e');
+      print("Google sign in failed: $e");
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Failed to sign up: $e'),
+        content: Text('Failed to sign up with Google: $e'),
       ));
     }
   }
 
-  Future<void> _signInWithGoogle() async {
+  // Show popup to inform user that the account already exists
+  void _showAccountExistsPopup() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Account Already Exists'),
+          content: Text('An account with this email already exists. Please log in instead.'),
+          actions: <Widget>[
+            TextButton(
+              child: Text('Log In'),
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+                Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => LoginScreen()));
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Show popup to collect phone and address and update Firestore
+  void _showAddressAndPhonePopup(User user) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Complete your profile'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _phoneController,
+                decoration: InputDecoration(labelText: 'Phone'),
+                keyboardType: TextInputType.phone,
+              ),
+              SizedBox(height: 16),
+              TextField(
+                controller: _addressController,
+                decoration: InputDecoration(labelText: 'Address'),
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: Text('Submit'),
+              onPressed: () async {
+                // Update Firestore with the new phone and address
+                await _firestore.collection('users').doc(user.uid).update({
+                  'phone': _phoneController.text.trim(),
+                  'address': _addressController.text.trim(),
+                  'updatedAt': Timestamp.now(),
+                });
+
+                // Close the dialog and proceed to the main screen
+                Navigator.of(context).pop();
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => MainScreen()),
+                );
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Method to handle Email/Password Sign-Up
+  Future<void> _signUp() async {
     try {
-      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-      if (googleUser != null) {
-        final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-        final AuthCredential credential = GoogleAuthProvider.credential(
-          accessToken: googleAuth.accessToken,
-          idToken: googleAuth.idToken,
+      // Check if the email already exists in Firebase Authentication
+      List<String> signInMethods = await _auth.fetchSignInMethodsForEmail(_emailController.text.trim());
+
+      if (signInMethods.isNotEmpty) {
+        // Email already exists, show the popup instead of Snackbar
+        _showAccountExistsPopup();
+      } else {
+        // Proceed with creating a new user
+        UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
+          email: _emailController.text.trim(),
+          password: _passwordController.text.trim(),
         );
 
-        UserCredential userCredential = await _auth.signInWithCredential(credential);
+        String? profileImageUrl = await _uploadProfileImage(userCredential.user!);
 
-        // Fetch Google profile picture
-        _profilePhotoUrl = googleUser.photoUrl ?? 'assets/default_profile_icon.png';
+        _profilePhotoUrl = profileImageUrl ?? 'assets/default_profile_icon.png';
 
-        // Add user information to Firestore
         await _firestore.collection('users').doc(userCredential.user!.uid).set({
-          'email': googleUser.email,
-          'name': googleUser.displayName ?? '',
-          'phone': '', // Add later if needed
-          'address': '', // Add later if needed
-          'profilePhotoUrl': _profilePhotoUrl,
+          'email': _emailController.text.trim(),
+          'name': _nameController.text.trim(),
+          'phone': _phoneController.text.trim(),
+          'address': _addressController.text.trim(),
+          'profilePhotoUrl': _profilePhotoUrl ?? '',
           'role': 'user',
           'createdAt': Timestamp.now(),
           'updatedAt': Timestamp.now(),
         });
 
-        // Navigate to the main screen after successful signup
         Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => MainScreen()));
       }
     } catch (e) {
-      print("Google sign in failed: $e");
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Failed to sign in with Google: $e'),
-      ));
+      if (e.toString().contains('email-already-in-use')) {
+        // Handle the "email already in use" error by showing the popup
+        _showAccountExistsPopup();
+      } else {
+        // You can handle other errors here (if needed)
+        print('Signup failed: $e');
+      }
     }
   }
 
@@ -135,8 +254,6 @@ class _SignupScreenState extends State<SignupScreen> {
                 ),
               ),
               SizedBox(height: 16),
-
-              // Email field
               TextField(
                 controller: _emailController,
                 decoration: InputDecoration(
@@ -146,8 +263,6 @@ class _SignupScreenState extends State<SignupScreen> {
                 keyboardType: TextInputType.emailAddress,
               ),
               SizedBox(height: 16),
-
-              // Password field
               TextField(
                 controller: _passwordController,
                 decoration: InputDecoration(
@@ -157,8 +272,6 @@ class _SignupScreenState extends State<SignupScreen> {
                 obscureText: true,
               ),
               SizedBox(height: 16),
-
-              // Name field
               TextField(
                 controller: _nameController,
                 decoration: InputDecoration(
@@ -167,8 +280,6 @@ class _SignupScreenState extends State<SignupScreen> {
                 ),
               ),
               SizedBox(height: 16),
-
-              // Phone field
               TextField(
                 controller: _phoneController,
                 decoration: InputDecoration(
@@ -178,8 +289,6 @@ class _SignupScreenState extends State<SignupScreen> {
                 keyboardType: TextInputType.phone,
               ),
               SizedBox(height: 16),
-
-              // Address field
               TextField(
                 controller: _addressController,
                 decoration: InputDecoration(
@@ -188,18 +297,16 @@ class _SignupScreenState extends State<SignupScreen> {
                 ),
               ),
               SizedBox(height: 16),
-
-              // Signup button
+              // Sign up button for email/password
               ElevatedButton(
                 onPressed: _signUp,
                 child: Text('Sign Up'),
                 style: ElevatedButton.styleFrom(minimumSize: Size(double.infinity, 50)),
               ),
               SizedBox(height: 16),
-
-              // Google sign-up button
+              // Google sign-up button with logo
               ElevatedButton.icon(
-                onPressed: _signInWithGoogle,
+                onPressed: _signUpWithGoogle,
                 icon: Image.asset(
                   'assets/google_logo.png',
                   height: 24,
@@ -209,8 +316,6 @@ class _SignupScreenState extends State<SignupScreen> {
                 style: ElevatedButton.styleFrom(minimumSize: Size(double.infinity, 50)),
               ),
               SizedBox(height: 16),
-
-              // Redirect to login button
               TextButton(
                 onPressed: () {
                   Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => LoginScreen()));
